@@ -1,0 +1,31 @@
+# Environment variables (sensitive credentials)
+.env
+.env.*
+
+# Sensitive files
+*senhas*
+*passwords*
+*credenciais*
+
+# Node modules
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Claude memory (internal tool data)
+.claude/
