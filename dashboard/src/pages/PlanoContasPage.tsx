@@ -309,6 +309,9 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
     }
 
     const isRoot = depth === 0;
+    const hasSubGroups = node.children.some(c => c.children.length > 0);
+    const subGroupCount = node.children.filter(c => c.children.length > 0).length;
+
     const buttonStyle: React.CSSProperties = isRoot
       ? {
           display: 'flex', alignItems: 'center', gap: '0.5rem',
@@ -340,6 +343,23 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
         <button onClick={() => toggleExpanded(key)} style={buttonStyle}>
           {isOpen ? <ChevronDown size={iconSize} /> : <ChevronRight size={iconSize} />}
           {node.nome}
+          {hasSubGroups && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              marginLeft: '0.4rem',
+              background: isRoot ? `${cor}33` : '#334155',
+              color: isRoot ? cor : '#94a3b8',
+              borderRadius: '4px',
+              padding: '0 0.35rem',
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              letterSpacing: '0.02em',
+              lineHeight: '1.4rem',
+              flexShrink: 0,
+            }}>
+              +{subGroupCount} sub
+            </span>
+          )}
           <span style={{ marginLeft: 'auto', fontWeight: 400, fontSize: '0.73rem', opacity: 0.7 }}>
             {totalLeaves} despesa{totalLeaves !== 1 ? 's' : ''}
           </span>
