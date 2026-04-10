@@ -6,13 +6,14 @@ export const SyncAPI = {
   async syncPlanoContas(unidadeId: string, itens: ItemPlanoContas[]): Promise<void> {
     if (!itens || itens.length === 0) return;
 
-    const payload = itens.map(c => ({
+    const payload = itens.map((c, index) => ({
       unidade_id: unidadeId,
       sponte_id: c.sponteId || null,
       nome: c.nome,
       tipo: c.tipo,
       grupo_nome: c.grupoNome,
       sub_grupo_nome: c.subGrupoNome,
+      sort_order: index + 1,
       sincronizado_em: new Date().toISOString(),
     }));
 

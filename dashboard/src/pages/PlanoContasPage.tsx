@@ -22,33 +22,48 @@ function countLeaves(node: TreeNode): number {
 }
 
 // ─── Monta árvore a partir das linhas do banco ───
-// Mantém a ordem de inserção (pelo campo `id` auto-increment do banco)
+// Mantém a ordem definida pela coluna sort_order
 
-function buildTreeFromDB(rows: { id: number; nome: string; tipo: string; grupo_nome: string | null; sub_grupo_nome: string | null }[]): TreeNode[] {
+interface DBRow {
+  id: string;
+  nome: string;
+  tipo: string;
+  grupo_nome: string | null;
+  sub_grupo_nome: string | null;
+  sort_order: number;
+}
+
+function buildTreeFromDB(rows: DBRow[]): TreeNode[] {
+  // rows já chegam ordenadas por sort_order (via .order() na query)
   const grupos = rows.filter(r => r.tipo === 'grupo');
   const result: TreeNode[] = [];
 
   for (const g of grupos) {
+    // sub_grupos deste grupo, na ordem correta
     const subGrupos = rows.filter(r => r.tipo === 'sub_grupo' && r.grupo_nome === g.nome);
+    // despesas diretas (sem sub_grupo)
     const directDespesas = rows.filter(r => r.tipo === 'despesa' && r.grupo_nome === g.nome && !r.sub_grupo_nome);
 
     const subGrupoNodes: TreeNode[] = subGrupos.map(sg => {
       const sgDespesas = rows.filter(r => r.tipo === 'despesa' && r.sub_grupo_nome === sg.nome);
       return {
-        id: sg.id,
+        id: sg.sort_order,
         nome: sg.nome,
-        children: sgDespesas.map(d => ({ id: d.id, nome: d.nome, children: [] })),
+        children: sgDespesas.map(d => ({ id: d.sort_order, nome: d.nome, children: [] })),
       };
     });
 
-    // Intercala sub_grupos e despesas diretas na ordem de inserção (id)
+    // Intercala sub_grupos e despesas diretas usando sort_order
     const allChildren = [
       ...subGrupoNodes,
-      ...directDespesas.map(d => ({ id: d.id, nome: d.nome, children: [] })),
+      ...directDespesas.map(d => ({ id: d.sort_order, nome: d.nome, children: [] })),
     ].sort((a, b) => a.id - b.id);
 
-    result.push({ id: g.id, nome: g.nome, children: allChildren });
+    result.push({ id: g.sort_order, nome: g.nome, children: allChildren });
   }
+
+  // Ordena grupos pelo sort_order
+  result.sort((a, b) => a.id - b.id);
 
   return result;
 }
@@ -81,21 +96,38 @@ function parseByParentIds(raws: RawCategoria[]): ItemPlanoContas[] {
     childrenOf.get(key)!.push(r.id);
   }
   const result: ItemPlanoContas[] = [];
-  const processNode = (id: number, grupoNome: string | null, subGrupoNome: string | null) => {
+
+  // Se há um único nó raiz com nome misto (ex: "ETP - Escola Tecnica Particular"),
+  // ele é apenas um container — pulamos ele e usamos seus filhos como grupos reais.
+  let actualRootIds = childrenOf.get(0) || [];
+  if (actualRootIds.length === 1) {
+    const singleRoot = byId.get(actualRootIds[0]);
+    if (singleRoot && !isAllCaps(singleRoot.nome)) {
+      actualRootIds = childrenOf.get(actualRootIds[0]) || [];
+    }
+  }
+
+  const processNode = (id: number, isRealRoot: boolean, grupoNome: string | null, subGrupoNome: string | null) => {
     const r = byId.get(id);
     if (!r) return;
     const children = childrenOf.get(id) || [];
-    const isRoot = r.paiId <= 0;
     let tipo: 'grupo' | 'sub_grupo' | 'despesa';
-    if (isRoot) tipo = 'grupo';
+    if (isRealRoot) tipo = 'grupo';
     else if (children.length > 0) tipo = 'sub_grupo';
     else tipo = 'despesa';
-    result.push({ sponteId: r.id, nome: r.nome, tipo, grupoNome: isRoot ? r.nome : grupoNome, subGrupoNome: tipo === 'sub_grupo' ? r.nome : subGrupoNome });
-    const nextGrupo = isRoot ? r.nome : grupoNome;
+    result.push({
+      sponteId: r.id,
+      nome: r.nome,
+      tipo,
+      grupoNome: isRealRoot ? r.nome : grupoNome,
+      subGrupoNome: tipo === 'sub_grupo' ? r.nome : subGrupoNome,
+    });
+    const nextGrupo = isRealRoot ? r.nome : grupoNome;
     const nextSubGrupo = tipo === 'sub_grupo' ? r.nome : subGrupoNome;
-    for (const childId of children) processNode(childId, nextGrupo, nextSubGrupo);
+    for (const childId of children) processNode(childId, false, nextGrupo, nextSubGrupo);
   };
-  for (const rootId of childrenOf.get(0) || []) processNode(rootId, null, null);
+
+  for (const rootId of actualRootIds) processNode(rootId, true, null, null);
   return result;
 }
 
@@ -188,9 +220,9 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
       try {
         const { data, error } = await supabase
           .from('etp_plano_contas')
-          .select('id, nome, tipo, grupo_nome, sub_grupo_nome')
+          .select('id, nome, tipo, grupo_nome, sub_grupo_nome, sort_order')
           .eq('unidade_id', u.id)
-          .order('id', { ascending: true });
+          .order('sort_order', { ascending: true });
 
         if (error) throw error;
 
