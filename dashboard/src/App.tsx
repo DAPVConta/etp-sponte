@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import UnidadesPage from './pages/UnidadesPage';
-import CategoriasPage from './pages/CategoriasPage';
+import PlanoContasPage from './pages/PlanoContasPage';
 import PlanejamentoPage from './pages/PlanejamentoPage';
 import type { AppPage, Unidade } from './types';
 import './index.css';
@@ -85,8 +85,8 @@ export default function App() {
           <DashboardPage activeUnidade={activeUnidade} accentColor={accentColor} />
         )}
         
-        {currentPage === 'categorias' && !loading && (
-          <CategoriasPage
+        {currentPage === 'plano_contas' && !loading && (
+          <PlanoContasPage
             unidades={unidades}
             accentColor={accentColor}
           />

@@ -98,8 +98,8 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
 
   // ── Itens filtrados por favorito e busca
   const itensFiltrados = itens.filter(i => {
-    if (apenasF && favoritos.size > 0 && !favoritos.has(i.categoria)) return false;
-    if (searchCat && !i.categoria.toLowerCase().includes(searchCat.toLowerCase())) return false;
+    if (apenasF && favoritos.size > 0 && !favoritos.has(i.grupo)) return false;
+    if (searchCat && !i.grupo.toLowerCase().includes(searchCat.toLowerCase())) return false;
     return true;
   });
 
@@ -150,7 +150,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
       const salvos = await PlanejamentoAPI.buscar([...selectedIds], mesPrincipal);
 
       const mesclados: ItemPlanejamento[] = mediasResults.map(item => {
-        const salvo = salvos.find(s => s.categoria === item.categoria);
+        const salvo = salvos.find(s => s.grupo === item.grupo);
         return {
           ...item,
           valorPlanejado: salvo ? salvo.valor_planejado : item.mediaSeisMeses,
@@ -168,20 +168,20 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
   }, [selectedIds, mesesSelecionados]);
 
   // ── Editar tabela
-  const atualizarValor = useCallback((categoria: string, rawValue: string) => {
+  const atualizarValor = useCallback((grupo: string, rawValue: string) => {
     setItens(prev =>
       prev.map(item =>
-        item.categoria === categoria
+        item.grupo === grupo
           ? { ...item, valorPlanejado: parseMoeda(rawValue) }
           : item
       )
     );
   }, []);
 
-  const atualizarObservacao = useCallback((categoria: string, obs: string) => {
+  const atualizarObservacao = useCallback((grupo: string, obs: string) => {
     setItens(prev =>
       prev.map(item =>
-        item.categoria === categoria ? { ...item, observacao: obs } : item
+        item.grupo === grupo ? { ...item, observacao: obs } : item
       )
     );
   }, []);
@@ -189,7 +189,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
   // ── Salvar
   const salvar = useCallback(async () => {
     const itensParaSalvar = apenasF && favoritos.size > 0
-      ? itens.filter(i => favoritos.has(i.categoria))
+      ? itens.filter(i => favoritos.has(i.grupo))
       : itens;
     if (!selectedIds.size || !mesesSelecionados.length || !itensParaSalvar.length) return;
     setSaving(true);
@@ -241,7 +241,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
             Planejamento de Despesas
           </h1>
           <p className="page-description">
-            Defina metas de gastos por categoria para as unidades selecionadas.
+            Defina metas de gastos por grupo para as unidades selecionadas.
           </p>
         </div>
         {tabelaVisivel && (
@@ -422,7 +422,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
             </button>
             {!temFavoritos && (
               <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                Acesse <strong>Categorias de Despesas</strong> para marcar favoritos ★
+                Acesse <strong>Plano de Contas</strong> para marcar favoritos ★
               </span>
             )}
           </div>
@@ -438,7 +438,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
           >
             {loadingMedias
               ? <><RefreshCw size={15} className="spin" /> Carregando...</>
-              : <><BarChart3 size={15} /> Carregar Categorias</>
+              : <><BarChart3 size={15} /> Carregar Grupos</>
             }
           </button>
         </div>
@@ -532,14 +532,14 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '1rem' }}>
               <h2 style={{ margin: 0 }}>
                 <BarChart3 size={18} style={{ color: accentColor }} />
-                Categorias de Despesas
-                <span className="table-count">{itensFiltrados.length} categorias</span>
+                Grupos do Plano de Contas
+                <span className="table-count">{itensFiltrados.length} grupos</span>
               </h2>
               <div className="filter-group" style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#64748b', zIndex: 1 }} />
                 <input
                   type="text"
-                  placeholder="Pesquisar categoria..."
+                  placeholder="Pesquisar grupo..."
                   value={searchCat}
                   onChange={e => setSearchCat(e.target.value)}
                   className="date-input"
@@ -551,7 +551,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '35%' }}>Categoria</th>
+                    <th style={{ width: '35%' }}>Grupo</th>
                     <th className="text-right">Média 6 meses</th>
                     <th className="text-right" style={{ minWidth: 180 }}>Valor Planejado</th>
                     <th className="text-right">Variação</th>
@@ -564,9 +564,9 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
                     const varPct = item.mediaSeisMeses > 0
                       ? ((variacao / item.mediaSeisMeses) * 100).toFixed(1)
                       : '0.0';
-                    const isFav = favoritos.has(item.categoria);
+                    const isFav = favoritos.has(item.grupo);
                     return (
-                      <tr key={item.categoria}>
+                      <tr key={item.grupo}>
                         <td>
                           <div className="planner-cat-name">
                             <span
@@ -575,7 +575,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
                             >
                               {idx + 1}
                             </span>
-                            {item.categoria}
+                            {item.grupo}
                             {isFav && (
                               <Star size={12} fill="#f59e0b" style={{ color: '#f59e0b', marginLeft: '4px', flexShrink: 0 }} />
                             )}
@@ -589,15 +589,15 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
                         <td className="text-right">
                           <div className="planner-input-wrap">
                             <span className="planner-input-prefix">R$</span>
-                            <MoedaInput 
+                            <MoedaInput
                               valor={item.valorPlanejado}
                               inputRef={el => {
-                                if (el) inputRefs.current.set(item.categoria, el);
+                                if (el) inputRefs.current.set(item.grupo, el);
                               }}
-                              onChange={(novoValor) => atualizarValor(item.categoria, novoValor.toString())}
+                              onChange={(novoValor) => atualizarValor(item.grupo, novoValor.toString())}
                               onEnter={() => {
                                 const nextItem = itensFiltrados[idx + 1];
-                                if (nextItem) inputRefs.current.get(nextItem.categoria)?.focus();
+                                if (nextItem) inputRefs.current.get(nextItem.grupo)?.focus();
                               }}
                             />
                           </div>
@@ -625,7 +625,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
                             className="planner-obs-input"
                             placeholder="Observação opcional..."
                             value={item.observacao || ''}
-                            onChange={e => atualizarObservacao(item.categoria, e.target.value)}
+                            onChange={e => atualizarObservacao(item.grupo, e.target.value)}
                           />
                         </td>
                       </tr>
@@ -635,14 +635,14 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
                   {itensFiltrados.length === 0 && (
                     <tr>
                       <td colSpan={5} className="empty-row">
-                        Nenhuma categoria favorita disponível neste conjunto de dados.
+                        Nenhum grupo favorito disponível neste conjunto de dados.
                       </td>
                     </tr>
                   )}
                 </tbody>
                 <tfoot>
                   <tr className="planner-tfoot">
-                    <td><strong>TOTAL{apenasF ? ' (favoritas)' : ''}</strong></td>
+                    <td><strong>TOTAL{apenasF ? ' (favoritos)' : ''}</strong></td>
                     <td className="text-right">
                       <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(totalMedia)}</strong>
                     </td>
@@ -710,7 +710,7 @@ export default function PlanejamentoPage({ unidades, accentColor }: Props) {
             <Target size={40} style={{ color: accentColor, opacity: 0.7 }} />
           </div>
           <h3>Selecione as unidades e os meses</h3>
-          <p>Escolha uma ou mais unidades e os meses que deseja planejar,<br />depois clique em <strong>Carregar Categorias</strong>.</p>
+          <p>Escolha uma ou mais unidades e os meses que deseja planejar,<br />depois clique em <strong>Carregar Grupos</strong>.</p>
         </div>
       )}
     </div>

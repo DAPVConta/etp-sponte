@@ -10,6 +10,7 @@ import type { Unidade, ParcelaPagar } from '../types';
 import { SyncAPI } from '../api/sync';
 import { ContasPagarAPI } from '../api/contasPagar';
 import { FavoritosAPI } from '../api/favoritos';
+import { supabase } from '../lib/supabase';
 
 // ─────────────────────────────────────────────
 // XML Parser (robust)
@@ -110,7 +111,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
 
   const [startDate, setStartDate] = useState('2026-02-01');
   const [endDate, setEndDate] = useState('2026-02-28');
-  const [selectedCategory, setSelectedCategory] = useState('Todas');
+  const [selectedGrupo, setSelectedGrupo] = useState('Todos');
   const [apenasF, setApenasF] = useState(false);
   const [favoritos, setFavoritos] = useState<Set<string>>(new Set());
   const [selectedSituations, setSelectedSituations] = useState<string[]>([]);
@@ -119,12 +120,33 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   const [tablePage, setTablePage] = useState(0);
   const PAGE_SIZE = 20;
 
+  // Mapeamento despesa → grupo_nome carregado do plano de contas
+  const [grupoMap, setGrupoMap] = useState<Record<string, string>>({});
+
   // Carrega favoritos do banco
   useEffect(() => {
     FavoritosAPI.listar()
       .then(lista => setFavoritos(new Set(lista)))
       .catch(console.error);
   }, []);
+
+  // Carrega mapeamento despesa → grupo do plano de contas
+  useEffect(() => {
+    if (!activeUnidade) { setGrupoMap({}); return; }
+    supabase
+      .from('etp_plano_contas')
+      .select('nome, grupo_nome')
+      .eq('unidade_id', activeUnidade.id)
+      .eq('tipo', 'despesa')
+      .then(({ data }) => {
+        const map: Record<string, string> = {};
+        for (const item of data || []) {
+          if (item.grupo_nome) map[item.nome] = item.grupo_nome;
+        }
+        setGrupoMap(map);
+      })
+      .catch(console.error);
+  }, [activeUnidade]);
 
   // ── Database Load ──
   const loadDataFromDB = useCallback(async () => {
@@ -234,13 +256,16 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   useEffect(() => { loadDataFromDB(); }, [loadDataFromDB]);
   
   // Reseta paginação se mudar filtro
-  useEffect(() => { setTablePage(0); }, [startDate, endDate, selectedCategory, selectedSituations, apenasF]);
+  useEffect(() => { setTablePage(0); }, [startDate, endDate, selectedGrupo, selectedSituations, apenasF]);
+
+  // Helper: resolve grupo de uma categoria (fallback para o próprio nome)
+  const getGrupo = useCallback((categoria: string) => grupoMap[categoria] || categoria, [grupoMap]);
 
   // ── Derived Data ──
-  const availableCategories = useMemo(() => {
-    const cats = new Set(data.map(d => d.Categoria).filter(Boolean));
-    return ['Todas', ...Array.from(cats).sort()];
-  }, [data]);
+  const availableGrupos = useMemo(() => {
+    const grupos = new Set(data.map(d => getGrupo(d.Categoria)).filter(Boolean));
+    return ['Todos', ...Array.from(grupos).sort()];
+  }, [data, getGrupo]);
 
   const availableSituations = useMemo(() => {
     const sits = new Set(data.map(d => d.SituacaoParcela || 'Sem Status'));
@@ -272,32 +297,31 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
       return vencDate >= start && vencDate <= end;
     });
 
-    if (selectedCategory !== 'Todas') {
-      result = result.filter(d => d.Categoria === selectedCategory);
+    if (selectedGrupo !== 'Todos') {
+      result = result.filter(d => getGrupo(d.Categoria) === selectedGrupo);
     }
     if (apenasF && favoritos.size > 0) {
-      result = result.filter(d => favoritos.has(d.Categoria));
+      result = result.filter(d => favoritos.has(getGrupo(d.Categoria)));
     }
     if (selectedSituations.length > 0) {
       result = result.filter(d => selectedSituations.includes(d.SituacaoParcela || 'Sem Status'));
     }
     return result;
-  }, [data, startDate, endDate, selectedCategory, apenasF, favoritos, selectedSituations]);
+  }, [data, startDate, endDate, selectedGrupo, apenasF, favoritos, selectedSituations, getGrupo]);
 
   const categoryDataArray = useMemo(() => {
     const agg = filteredData.reduce((acc, curr) => {
-      const cat = curr.Categoria || 'Outros';
-      // Para pagas: usar ValorPago; para pendentes: usar ValorParcela
+      const grupo = getGrupo(curr.Categoria || 'Outros');
       const val = (curr.SituacaoParcela && curr.SituacaoParcela !== 'Pendente' && curr.ValorPago > 0)
         ? curr.ValorPago
         : curr.ValorParcela;
-      acc[cat] = (acc[cat] || 0) + val;
+      acc[grupo] = (acc[grupo] || 0) + val;
       return acc;
     }, {} as Record<string, number>);
     return Object.entries(agg)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [filteredData]);
+  }, [filteredData, getGrupo]);
 
   const monthlyDataArray = useMemo(() => {
     // Mostrar evolução dos últimos 12 meses baseado em DataPagamento (pagas) ou Vencimento (pendentes)
@@ -307,7 +331,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
 
     const agg: Record<string, number> = {};
     for (const item of data) {
-      if (selectedCategory !== 'Todas' && item.Categoria !== selectedCategory) continue;
+      if (selectedGrupo !== 'Todos' && getGrupo(item.Categoria) !== selectedGrupo) continue;
       if (selectedSituations.length > 0 && !selectedSituations.includes(item.SituacaoParcela || 'Sem Status')) continue;
       let refDate: Date | null = null;
       if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
@@ -327,13 +351,16 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
       const key = `${MONTH_NAMES[d.getMonth()]}/${d.getFullYear()}`;
       return { name: key, value: agg[key] || 0 };
     });
-  }, [data, selectedCategory, selectedSituations]);
+  }, [data, selectedGrupo, selectedSituations, getGrupo]);
 
   const pagasNoP = useMemo(() => filteredData.filter(i => i.SituacaoParcela && i.SituacaoParcela !== 'Pendente'), [filteredData]);
   const pendentesNoP = useMemo(() => filteredData.filter(i => !i.SituacaoParcela || i.SituacaoParcela === 'Pendente'), [filteredData]);
   const totalPago = useMemo(() => pagasNoP.reduce((s, i) => s + (i.ValorPago || i.ValorParcela), 0), [pagasNoP]);
   const totalPendente = useMemo(() => pendentesNoP.reduce((s, i) => s + i.ValorParcela, 0), [pendentesNoP]);
-  const uniqueCategories = useMemo(() => new Set(filteredData.map(d => d.Categoria)).size, [filteredData]);
+  const uniqueGrupos = useMemo(() =>
+    new Set(filteredData.map(d => getGrupo(d.Categoria)).filter(Boolean)).size,
+    [filteredData, getGrupo]
+  );
 
   const pagedData = useMemo(() => {
     const start = tablePage * PAGE_SIZE;
@@ -410,7 +437,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             )}
           </div>
 
-          {/* ── Filtro de Categorias (com favoritas) ── */}
+          {/* ── Filtro de Grupos ── */}
           <div className="filter-group" style={{ position: 'relative' }}>
             {apenasF
               ? <Star size={15} fill="#f59e0b" style={{ color: '#f59e0b', flexShrink: 0 }} />
@@ -433,10 +460,10 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             >
               <span>
                 {apenasF
-                  ? `★ Favoritas (${favoritos.size})`
-                  : selectedCategory === 'Todas'
-                  ? 'Todas as Categorias'
-                  : selectedCategory}
+                  ? `★ Favoritos (${favoritos.size})`
+                  : selectedGrupo === 'Todos'
+                  ? 'Todos os Grupos'
+                  : selectedGrupo}
               </span>
               <span style={{ fontSize: '10px' }}>▼</span>
             </div>
@@ -449,26 +476,26 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
                 boxShadow: '0 20px 40px -8px rgba(0,0,0,0.7)',
                 maxHeight: '340px', overflowY: 'auto',
               }}>
-                {/* Opção: Todas */}
+                {/* Opção: Todos */}
                 <button
-                  onClick={() => { setSelectedCategory('Todas'); setApenasF(false); setCatDropdownOpen(false); }}
+                  onClick={() => { setSelectedGrupo('Todos'); setApenasF(false); setCatDropdownOpen(false); }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
                     padding: '7px 10px', borderRadius: '7px', border: 'none',
-                    background: !apenasF && selectedCategory === 'Todas' ? 'rgba(99,102,241,0.15)' : 'transparent',
-                    color: !apenasF && selectedCategory === 'Todas' ? '#6366f1' : '#e2e8f0',
-                    fontWeight: !apenasF && selectedCategory === 'Todas' ? 600 : 400,
+                    background: !apenasF && selectedGrupo === 'Todos' ? 'rgba(99,102,241,0.15)' : 'transparent',
+                    color: !apenasF && selectedGrupo === 'Todos' ? '#6366f1' : '#e2e8f0',
+                    fontWeight: !apenasF && selectedGrupo === 'Todos' ? 600 : 400,
                     cursor: 'pointer', fontSize: '0.85rem', textAlign: 'left',
                     fontFamily: 'Inter, sans-serif',
                   }}
                 >
-                  Todas as Categorias
+                  Todos os Grupos
                 </button>
 
-                {/* Opção: Apenas Favoritas */}
+                {/* Opção: Apenas Favoritos */}
                 {favoritos.size > 0 && (
                   <button
-                    onClick={() => { setApenasF(true); setSelectedCategory('Todas'); setCatDropdownOpen(false); }}
+                    onClick={() => { setApenasF(true); setSelectedGrupo('Todos'); setCatDropdownOpen(false); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
                       padding: '7px 10px', borderRadius: '7px', border: 'none',
@@ -482,21 +509,21 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
                     }}
                   >
                     <Star size={14} fill={apenasF ? '#f59e0b' : 'none'} />
-                    Apenas Favoritas ({favoritos.size})
+                    Apenas Favoritos ({favoritos.size})
                   </button>
                 )}
 
                 {/* Separador */}
                 <div style={{ height: '1px', background: '#334155', margin: '6px 0' }} />
 
-                {/* Lista de categorias */}
-                {availableCategories.filter(c => c !== 'Todas').map(cat => {
-                  const isFav = favoritos.has(cat);
-                  const isActive = !apenasF && selectedCategory === cat;
+                {/* Lista de grupos */}
+                {availableGrupos.filter(g => g !== 'Todos').map(grupo => {
+                  const isFav = favoritos.has(grupo);
+                  const isActive = !apenasF && selectedGrupo === grupo;
                   return (
                     <button
-                      key={cat}
-                      onClick={() => { setSelectedCategory(cat); setApenasF(false); setCatDropdownOpen(false); }}
+                      key={grupo}
+                      onClick={() => { setSelectedGrupo(grupo); setApenasF(false); setCatDropdownOpen(false); }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '7px', width: '100%',
                         padding: '6px 10px', borderRadius: '7px', border: 'none',
@@ -508,7 +535,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
                       }}
                     >
                       {isFav && <Star size={11} fill="#f59e0b" style={{ color: '#f59e0b', flexShrink: 0 }} />}
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{grupo}</span>
                     </button>
                   );
                 })}
@@ -574,7 +601,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             </div>
             <div className="stat-card">
               <div className="stat-icon bg-purple"><Hash size={24} /></div>
-              <div className="stat-details"><h3>Categorias</h3><p>{uniqueCategories}</p></div>
+              <div className="stat-details"><h3>Grupos</h3><p>{uniqueGrupos}</p></div>
             </div>
           </div>
 
@@ -583,7 +610,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             <div className="chart-card" style={{ gridColumn: 'span 2' }}>
               <h2>
                 Evolução Mensal · Últimos 12 Meses
-                {selectedCategory !== 'Todas' && <span className="chart-filter-tag">{selectedCategory}</span>}
+                {selectedGrupo !== 'Todos' && <span className="chart-filter-tag">{selectedGrupo}</span>}
               </h2>
               <div className="chart-wrapper" style={{ height: '400px' }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -613,7 +640,7 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             </div>
 
             <div className="chart-card" style={{ gridColumn: 'span 2' }}>
-              <h2>Gastos por Categoria · Período Selecionado</h2>
+              <h2>Gastos por Grupo · Período Selecionado</h2>
               <div
                 className="chart-wrapper"
                 style={{ height: `${Math.max(400, categoryDataArray.length * 38)}px`, minHeight: '400px' }}

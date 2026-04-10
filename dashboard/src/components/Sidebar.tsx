@@ -12,7 +12,7 @@ interface SidebarProps {
 const navItems: { id: AppPage; label: string; icon: React.ReactNode }[] = [
   { id: 'dashboard', label: 'Dashboard Financeiro', icon: <LayoutDashboard size={18} /> },
   { id: 'planejamento', label: 'Planejamento', icon: <Target size={18} /> },
-  { id: 'categorias', label: 'Categorias de Despesas', icon: <Tag size={18} /> },
+  { id: 'plano_contas', label: 'Plano de Contas', icon: <Tag size={18} /> },
   { id: 'unidades', label: 'Cadastro de Unidades', icon: <Building2 size={18} /> },
 ];
 

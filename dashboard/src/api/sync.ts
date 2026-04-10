@@ -1,25 +1,27 @@
 import { supabase } from '../lib/supabase';
-import type { CategoriaDespesa, ParcelaPagar } from '../types';
+import type { ItemPlanoContas, ParcelaPagar } from '../types';
 
 export const SyncAPI = {
-  // Sincroniza Categorias de Despesas (Upsert)
-  async syncCategorias(unidadeId: string, categorias: CategoriaDespesa[]): Promise<void> {
-    if (!categorias || categorias.length === 0) return;
+  // Sincroniza Plano de Contas (Upsert hierárquico)
+  async syncPlanoContas(unidadeId: string, itens: ItemPlanoContas[]): Promise<void> {
+    if (!itens || itens.length === 0) return;
 
-    const payload = categorias.map(c => ({
+    const payload = itens.map(c => ({
       unidade_id: unidadeId,
-      categoria_id: c.categoriaID,
+      sponte_id: c.sponteId || null,
       nome: c.nome,
-      sincronizado_em: new Date().toISOString()
+      tipo: c.tipo,
+      grupo_nome: c.grupoNome,
+      sub_grupo_nome: c.subGrupoNome,
+      sincronizado_em: new Date().toISOString(),
     }));
 
-    // Upsert usando a constraint de unicidade: uq_cat_unidade (unidade_id, categoria_id)
     const { error } = await supabase
-      .from('etp_categorias_despesas')
-      .upsert(payload, { onConflict: 'unidade_id,categoria_id' });
+      .from('etp_plano_contas')
+      .upsert(payload, { onConflict: 'unidade_id,nome' });
 
     if (error) {
-      console.error('Erro ao sincronizar categorias no Supabase:', error);
+      console.error('Erro ao sincronizar plano de contas no Supabase:', error);
       throw error;
     }
   },

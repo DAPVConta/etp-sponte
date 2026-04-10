@@ -12,11 +12,14 @@ export interface Unidade {
   criadoEm: string;
 }
 
-export type AppPage = 'dashboard' | 'unidades' | 'categorias' | 'planejamento';
+export type AppPage = 'dashboard' | 'unidades' | 'plano_contas' | 'planejamento';
 
-export interface CategoriaDespesa {
-  categoriaID: number;
+export interface ItemPlanoContas {
+  sponteId: number;
   nome: string;
+  tipo: 'grupo' | 'sub_grupo' | 'despesa';
+  grupoNome: string | null;
+  subGrupoNome: string | null;
 }
 
 export interface ParcelaPagar {
