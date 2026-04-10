@@ -1,29 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { BookOpen, RefreshCw, AlertCircle, Wifi, WifiOff, ChevronRight, ChevronDown } from 'lucide-react';
+import { BookOpen, RefreshCw, AlertCircle, Wifi, WifiOff, ChevronRight, ChevronDown, Database } from 'lucide-react';
 import type { Unidade, ItemPlanoContas } from '../types';
 import { SyncAPI } from '../api/sync';
+import { supabase } from '../lib/supabase';
 
 // ─────────────────────────────────────────────
-// Helpers de parsing
+// Estrutura de árvore para display
 // ─────────────────────────────────────────────
-
-function cleanName(raw: string): string {
-  return raw.replace(/\s*\(\*\)\s*$/, '').trim();
-}
-
-function isAllCaps(s: string): boolean {
-  const letters = s.replace(/[^a-zA-ZÀ-ÿ]/g, '');
-  return letters.length > 0 && letters === letters.toUpperCase();
-}
-
-interface RawCategoria {
-  id: number;
-  paiId: number; // -1 = campo não presente no XML
-  nome: string;
-}
-
-// ─── Estrutura de árvore para display ───
 
 interface TreeNode {
   id: number;
@@ -37,112 +21,81 @@ function countLeaves(node: TreeNode): number {
   return node.children.reduce((s, c) => s + countLeaves(c), 0);
 }
 
-/** Monta árvore completa para exibição usando paiId */
-function buildDisplayTreeByIds(raws: RawCategoria[]): TreeNode[] {
-  const nodeMap = new Map<number, TreeNode>(
-    raws.map(r => [r.id, { id: r.id, nome: r.nome, children: [] }])
-  );
-  const roots: TreeNode[] = [];
+// ─── Monta árvore a partir das linhas do banco ───
+// Mantém a ordem de inserção (pelo campo `id` auto-increment do banco)
 
-  for (const r of raws) {
-    const node = nodeMap.get(r.id)!;
-    if (r.paiId <= 0) {
-      roots.push(node);
-    } else {
-      const parent = nodeMap.get(r.paiId);
-      if (parent) {
-        parent.children.push(node);
-      } else {
-        roots.push(node); // órfão → trata como raiz
-      }
-    }
+function buildTreeFromDB(rows: { id: number; nome: string; tipo: string; grupo_nome: string | null; sub_grupo_nome: string | null }[]): TreeNode[] {
+  const grupos = rows.filter(r => r.tipo === 'grupo');
+  const result: TreeNode[] = [];
+
+  for (const g of grupos) {
+    const subGrupos = rows.filter(r => r.tipo === 'sub_grupo' && r.grupo_nome === g.nome);
+    const directDespesas = rows.filter(r => r.tipo === 'despesa' && r.grupo_nome === g.nome && !r.sub_grupo_nome);
+
+    const subGrupoNodes: TreeNode[] = subGrupos.map(sg => {
+      const sgDespesas = rows.filter(r => r.tipo === 'despesa' && r.sub_grupo_nome === sg.nome);
+      return {
+        id: sg.id,
+        nome: sg.nome,
+        children: sgDespesas.map(d => ({ id: d.id, nome: d.nome, children: [] })),
+      };
+    });
+
+    // Intercala sub_grupos e despesas diretas na ordem de inserção (id)
+    const allChildren = [
+      ...subGrupoNodes,
+      ...directDespesas.map(d => ({ id: d.id, nome: d.nome, children: [] })),
+    ].sort((a, b) => a.id - b.id);
+
+    result.push({ id: g.id, nome: g.nome, children: allChildren });
   }
 
-  return roots;
+  return result;
 }
 
-/** Monta árvore para exibição usando maiúsculas + ordem (fallback) */
-function buildDisplayTreeByOrdering(raws: RawCategoria[]): TreeNode[] {
-  const roots: TreeNode[] = [];
-  let currentGrupo: TreeNode | null = null;
-  let currentSubGrupo: TreeNode | null = null;
-  let grupoHadItems = false;
+// ─────────────────────────────────────────────
+// Helpers de parsing do XML da Sponte
+// ─────────────────────────────────────────────
 
-  for (const r of raws) {
-    if (isAllCaps(r.nome)) {
-      if (currentGrupo === null || grupoHadItems) {
-        currentGrupo = { id: r.id, nome: r.nome, children: [] };
-        roots.push(currentGrupo);
-        currentSubGrupo = null;
-        grupoHadItems = false;
-      } else {
-        currentSubGrupo = { id: r.id, nome: r.nome, children: [] };
-        currentGrupo.children.push(currentSubGrupo);
-      }
-    } else {
-      const leaf: TreeNode = { id: r.id, nome: r.nome, children: [] };
-      if (currentSubGrupo) {
-        currentSubGrupo.children.push(leaf);
-      } else if (currentGrupo) {
-        currentGrupo.children.push(leaf);
-        grupoHadItems = true;
-      } else {
-        roots.push(leaf);
-      }
-    }
-  }
-
-  return roots;
+function cleanName(raw: string): string {
+  return raw.replace(/\s*\(\*\)\s*$/, '').trim();
 }
 
-// ─── Parsing para DB (ItemPlanoContas) — mantido igual ───
+function isAllCaps(s: string): boolean {
+  const letters = s.replace(/[^a-zA-ZÀ-ÿ]/g, '');
+  return letters.length > 0 && letters === letters.toUpperCase();
+}
+
+interface RawCategoria {
+  id: number;
+  paiId: number;
+  nome: string;
+}
 
 function parseByParentIds(raws: RawCategoria[]): ItemPlanoContas[] {
   const byId = new Map(raws.map(r => [r.id, r]));
   const childrenOf = new Map<number, number[]>();
-
   for (const r of raws) {
     const key = r.paiId <= 0 ? 0 : r.paiId;
     if (!childrenOf.has(key)) childrenOf.set(key, []);
     childrenOf.get(key)!.push(r.id);
   }
-
   const result: ItemPlanoContas[] = [];
-
   const processNode = (id: number, grupoNome: string | null, subGrupoNome: string | null) => {
     const r = byId.get(id);
     if (!r) return;
     const children = childrenOf.get(id) || [];
     const isRoot = r.paiId <= 0;
-
     let tipo: 'grupo' | 'sub_grupo' | 'despesa';
-    if (isRoot) {
-      tipo = 'grupo';
-    } else if (children.length > 0) {
-      tipo = 'sub_grupo';
-    } else {
-      tipo = 'despesa';
-    }
-
-    result.push({
-      sponteId: r.id,
-      nome: r.nome,
-      tipo,
-      grupoNome: isRoot ? r.nome : grupoNome,
-      subGrupoNome: tipo === 'sub_grupo' ? r.nome : subGrupoNome,
-    });
-
+    if (isRoot) tipo = 'grupo';
+    else if (children.length > 0) tipo = 'sub_grupo';
+    else tipo = 'despesa';
+    result.push({ sponteId: r.id, nome: r.nome, tipo, grupoNome: isRoot ? r.nome : grupoNome, subGrupoNome: tipo === 'sub_grupo' ? r.nome : subGrupoNome });
     const nextGrupo = isRoot ? r.nome : grupoNome;
     const nextSubGrupo = tipo === 'sub_grupo' ? r.nome : subGrupoNome;
-    for (const childId of children) {
-      processNode(childId, nextGrupo, nextSubGrupo);
-    }
+    for (const childId of children) processNode(childId, nextGrupo, nextSubGrupo);
   };
-
-  for (const rootId of childrenOf.get(0) || []) {
-    processNode(rootId, null, null);
-  }
-
+  for (const rootId of childrenOf.get(0) || []) processNode(rootId, null, null);
   return result;
 }
 
@@ -151,13 +104,10 @@ function parseByOrdering(raws: RawCategoria[]): ItemPlanoContas[] {
   let currentGrupo: string | null = null;
   let currentSubGrupo: string | null = null;
   let grupoHadItems = false;
-
   for (const r of raws) {
     if (isAllCaps(r.nome)) {
       if (currentGrupo === null || grupoHadItems) {
-        currentGrupo = r.nome;
-        currentSubGrupo = null;
-        grupoHadItems = false;
+        currentGrupo = r.nome; currentSubGrupo = null; grupoHadItems = false;
         result.push({ sponteId: r.id, nome: r.nome, tipo: 'grupo', grupoNome: r.nome, subGrupoNome: null });
       } else {
         currentSubGrupo = r.nome;
@@ -165,31 +115,20 @@ function parseByOrdering(raws: RawCategoria[]): ItemPlanoContas[] {
       }
     } else {
       if (!currentSubGrupo) grupoHadItems = true;
-      result.push({
-        sponteId: r.id,
-        nome: r.nome,
-        tipo: 'despesa',
-        grupoNome: currentGrupo,
-        subGrupoNome: currentSubGrupo,
-      });
+      result.push({ sponteId: r.id, nome: r.nome, tipo: 'despesa', grupoNome: currentGrupo, subGrupoNome: currentSubGrupo });
     }
   }
-
   return result;
 }
 
-/** Extrai dados brutos do XML e retorna tanto a lista plana (para DB) quanto a árvore (para display) */
-function parsePlanoContasXML(xmlString: string): { itens: ItemPlanoContas[]; tree: TreeNode[] } {
+function parsePlanoContasXML(xmlString: string): ItemPlanoContas[] {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
-  if (xmlDoc.querySelector('parsererror')) return { itens: [], tree: [] };
-
+  if (xmlDoc.querySelector('parsererror')) return [];
   const nodes = Array.from(xmlDoc.getElementsByTagName('Categorias'));
-  if (nodes.length === 0) return { itens: [], tree: [] };
-
+  if (nodes.length === 0) return [];
   const raws: RawCategoria[] = [];
   let hasPaiId = false;
-
   for (const node of nodes) {
     const id = parseInt(node.getElementsByTagName('CategoriaID')[0]?.textContent?.trim() || '0', 10);
     const paiIdEl = node.getElementsByTagName('CategoriaPaiID')[0];
@@ -198,13 +137,7 @@ function parsePlanoContasXML(xmlString: string): { itens: ItemPlanoContas[]; tre
     const nome = cleanName(node.getElementsByTagName('Nome')[0]?.textContent?.trim() || '');
     if (id > 0 && nome) raws.push({ id, paiId, nome });
   }
-
-  if (raws.length === 0) return { itens: [], tree: [] };
-
-  const itens = hasPaiId ? parseByParentIds(raws) : parseByOrdering(raws);
-  const tree = hasPaiId ? buildDisplayTreeByIds(raws) : buildDisplayTreeByOrdering(raws);
-
-  return { itens, tree };
+  return hasPaiId ? parseByParentIds(raws) : parseByOrdering(raws);
 }
 
 // ─────────────────────────────────────────────
@@ -213,11 +146,11 @@ function parsePlanoContasXML(xmlString: string): { itens: ItemPlanoContas[]; tre
 
 interface UnidadeResult {
   unidade: Unidade;
-  itens: ItemPlanoContas[]; // para sync/stats
-  tree: TreeNode[];         // para display
+  tree: TreeNode[];
+  totalDespesas: number;
   loading: boolean;
   error: string;
-  synced: boolean;
+  source: 'db' | 'api' | 'none';
 }
 
 interface Props {
@@ -232,6 +165,7 @@ interface Props {
 export default function PlanoContasPage({ unidades, accentColor }: Props) {
   const [results, setResults] = useState<UnidadeResult[]>([]);
   const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [syncing, setSyncing] = useState(false);
   // key = `${unidadeId}:${nodeId}` para controlar expansão de qualquer nível
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -244,40 +178,39 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
     });
   };
 
-  const fetchAll = useCallback(async () => {
+  // ── Carrega do banco de dados ──
+  const loadFromDB = useCallback(async () => {
     if (unidades.length === 0) return;
 
-    setResults(
-      unidades.map(u => ({ unidade: u, itens: [], tree: [], loading: true, error: '', synced: false }))
-    );
+    setResults(unidades.map(u => ({ unidade: u, tree: [], totalDespesas: 0, loading: true, error: '', source: 'none' })));
 
     const promises = unidades.map(async (u): Promise<UnidadeResult> => {
       try {
-        const res = await axios.get('/api-sponte/WSAPIEdu.asmx/GetCategoriasDespesas', {
-          params: { nCodigoCliente: u.codigoSponte, sToken: u.tokenSponte },
-          timeout: 20000,
-        });
-        const { itens, tree } = parsePlanoContasXML(res.data);
+        const { data, error } = await supabase
+          .from('etp_plano_contas')
+          .select('id, nome, tipo, grupo_nome, sub_grupo_nome')
+          .eq('unidade_id', u.id)
+          .order('id', { ascending: true });
 
-        try {
-          await SyncAPI.syncPlanoContas(u.id, itens);
-          await SyncAPI.logSync(u.id, 'plano_contas', 'sucesso', itens.length);
-        } catch (syncErr) {
-          console.error(`Falha ao sincronizar plano de contas da unidade ${u.nome}:`, syncErr);
-          await SyncAPI.logSync(u.id, 'plano_contas', 'erro', itens.length, String(syncErr));
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          return { unidade: u, tree: [], totalDespesas: 0, loading: false, error: '', source: 'none' };
         }
 
-        return { unidade: u, itens, tree, loading: false, error: '', synced: true };
+        const tree = buildTreeFromDB(data);
+        const totalDespesas = data.filter(r => r.tipo === 'despesa').length;
+
+        return { unidade: u, tree, totalDespesas, loading: false, error: '', source: 'db' };
       } catch (e: any) {
-        return { unidade: u, itens: [], tree: [], loading: false, error: e?.message || 'Erro desconhecido', synced: false };
+        return { unidade: u, tree: [], totalDespesas: 0, loading: false, error: e?.message || 'Erro desconhecido', source: 'none' };
       }
     });
 
     const all = await Promise.all(promises);
     setResults(all);
-    setLastSync(new Date());
 
-    // Expande automaticamente apenas o primeiro nível (raiz)
+    // Expande apenas o primeiro nível (grupos raiz)
     const keys = new Set<string>();
     for (const r of all) {
       for (const node of r.tree) {
@@ -287,7 +220,36 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
     setExpanded(keys);
   }, [unidades]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // ── Sincroniza com a API Sponte e recarrega do banco ──
+  const syncFromAPI = useCallback(async () => {
+    if (unidades.length === 0 || syncing) return;
+    setSyncing(true);
+
+    const promises = unidades.map(async (u) => {
+      try {
+        const res = await axios.get('/api-sponte/WSAPIEdu.asmx/GetCategoriasDespesas', {
+          params: { nCodigoCliente: u.codigoSponte, sToken: u.tokenSponte },
+          timeout: 20000,
+        });
+        const itens = parsePlanoContasXML(res.data);
+        await SyncAPI.syncPlanoContas(u.id, itens);
+        await SyncAPI.logSync(u.id, 'plano_contas', 'sucesso', itens.length);
+      } catch (e: any) {
+        console.error(`Erro ao sincronizar ${u.nome}:`, e);
+        try { await SyncAPI.logSync(u.id, 'plano_contas', 'erro', 0, String(e)); } catch {}
+      }
+    });
+
+    await Promise.all(promises);
+    setLastSync(new Date());
+    setSyncing(false);
+
+    // Recarrega do banco após sync
+    await loadFromDB();
+  }, [unidades, syncing, loadFromDB]);
+
+  // Carrega do banco ao montar
+  useEffect(() => { loadFromDB(); }, [loadFromDB]);
 
   // ── Render recursivo de um nó da árvore ──
   const renderNode = (node: TreeNode, depth: number, unidadeId: string, cor: string): JSX.Element => {
@@ -314,7 +276,6 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
       );
     }
 
-    // Estilo varia por profundidade
     const isRoot = depth === 0;
     const buttonStyle: React.CSSProperties = isRoot
       ? {
@@ -364,20 +325,15 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
   // ── Render de uma unidade ──
   const renderUnidade = (r: UnidadeResult) => {
     if (r.loading || r.error) return null;
-
-    const totalDespesas = r.itens.filter(i => i.tipo === 'despesa').length;
-    const totalGrupos = r.tree.length;
+    if (r.tree.length === 0) return null;
 
     return (
       <div key={r.unidade.id} className="table-card" style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-          <span
-            className="unit-dot"
-            style={{ background: r.unidade.cor, width: 10, height: 10, borderRadius: '50%', display: 'inline-block' }}
-          />
+          <span style={{ background: r.unidade.cor, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
           <span style={{ color: r.unidade.cor }}>{r.unidade.nome}</span>
           <span className="table-count">
-            {totalDespesas} despesas · {totalGrupos} grupo{totalGrupos !== 1 ? 's' : ''}
+            {r.totalDespesas} despesas · {r.tree.length} grupo{r.tree.length !== 1 ? 's' : ''}
           </span>
         </h2>
 
@@ -389,7 +345,7 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
   };
 
   const isLoading = results.some(r => r.loading);
-  const totalItens = results.reduce((s, r) => s + r.itens.length, 0);
+  const totalItens = results.reduce((s, r) => s + r.tree.length, 0);
 
   return (
     <div className="page-content">
@@ -416,13 +372,22 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
 
         <div className="header-actions">
           <button
-            onClick={fetchAll}
+            onClick={loadFromDB}
             className="refresh-btn"
-            disabled={isLoading}
+            disabled={isLoading || syncing}
+            style={{ background: '#334155', boxShadow: 'none', marginRight: '0.5rem' }}
+          >
+            <Database size={16} />
+            Recarregar
+          </button>
+          <button
+            onClick={syncFromAPI}
+            className="refresh-btn"
+            disabled={isLoading || syncing}
             style={{ background: accentColor, boxShadow: `0 4px 6px -1px ${accentColor}55` }}
           >
-            <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-            Sincronizar
+            <RefreshCw size={16} className={syncing ? 'spin' : ''} />
+            Sincronizar API
           </button>
         </div>
       </header>
@@ -436,6 +401,8 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
                 <RefreshCw size={24} className="spin" style={{ color: r.unidade.cor }} />
               ) : r.error ? (
                 <WifiOff size={24} style={{ color: '#ef4444' }} />
+              ) : r.source === 'none' ? (
+                <Database size={24} style={{ color: '#64748b' }} />
               ) : (
                 <Wifi size={24} style={{ color: r.unidade.cor }} />
               )}
@@ -445,11 +412,13 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
               {r.loading ? (
                 <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Carregando...</p>
               ) : r.error ? (
-                <p style={{ fontSize: '0.8rem', color: '#ef4444' }}>Erro na API</p>
+                <p style={{ fontSize: '0.8rem', color: '#ef4444' }}>Erro ao carregar</p>
+              ) : r.source === 'none' ? (
+                <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Sem dados — clique em Sincronizar</p>
               ) : (
                 <p>
                   {r.tree.length} grupo{r.tree.length !== 1 ? 's' : ''} ·{' '}
-                  {r.itens.filter(i => i.tipo === 'despesa').length} despesas
+                  {r.totalDespesas} despesas
                 </p>
               )}
             </div>
@@ -467,7 +436,14 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
       {isLoading && (
         <div className="loading-state">
           <div className="spinner" style={{ borderTopColor: accentColor }} />
-          <p>Sincronizando plano de contas...</p>
+          <p>Carregando plano de contas...</p>
+        </div>
+      )}
+
+      {syncing && (
+        <div className="loading-state">
+          <div className="spinner" style={{ borderTopColor: accentColor }} />
+          <p>Sincronizando com a API Sponte...</p>
         </div>
       )}
 
@@ -480,14 +456,14 @@ export default function PlanoContasPage({ unidades, accentColor }: Props) {
       ))}
 
       {/* Árvores por unidade */}
-      {!isLoading && totalItens > 0 && results.map(renderUnidade)}
+      {!isLoading && !syncing && totalItens > 0 && results.map(renderUnidade)}
 
       {/* Estado vazio */}
-      {!isLoading && totalItens === 0 && results.length > 0 && !results.some(r => r.error) && (
+      {!isLoading && !syncing && totalItens === 0 && results.length > 0 && !results.some(r => r.error) && (
         <div className="empty-state" style={{ marginTop: '2rem' }}>
           <BookOpen size={48} style={{ color: '#64748b', opacity: 0.4 }} />
           <h3>Nenhum item no plano de contas</h3>
-          <p>Clique em <strong>Sincronizar</strong> para buscar o plano de contas via API Sponte.</p>
+          <p>Clique em <strong>Sincronizar API</strong> para buscar o plano de contas via Sponte e salvar no banco.</p>
         </div>
       )}
     </div>
