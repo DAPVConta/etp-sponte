@@ -17,6 +17,8 @@ export type AppPage = 'dashboard' | 'unidades' | 'categorias' | 'planejamento';
 export interface CategoriaDespesa {
   categoriaID: number;
   nome: string;
+  grupo?: string;
+  subgrupo?: string;
 }
 
 export interface ParcelaPagar {

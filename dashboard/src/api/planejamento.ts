@@ -119,4 +119,34 @@ export const PlanejamentoAPI = {
 
     if (error) throw error;
   },
+
+  // ── Buscar totais planejados por mês (para overlay no gráfico do dashboard)
+  async totaisMensais(
+    unidadeIds: string[],
+    meses: string[]  // ['YYYY-MM', ...]
+  ): Promise<Record<string, number>> {
+    if (!unidadeIds.length || !meses.length) return {};
+
+    let query = supabase
+      .from('etp_planejamento')
+      .select('mes_referencia, valor_planejado');
+
+    if (unidadeIds.length === 1) {
+      query = query.eq('unidade_id', unidadeIds[0]);
+    } else {
+      query = query.in('unidade_id', unidadeIds);
+    }
+
+    query = query.in('mes_referencia', meses);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const totais: Record<string, number> = {};
+    for (const row of data || []) {
+      const mes = row.mes_referencia;
+      totais[mes] = (totais[mes] || 0) + Number(row.valor_planejado);
+    }
+    return totais;
+  },
 };

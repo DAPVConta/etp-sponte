@@ -14,7 +14,7 @@ export const ContasPagarAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_pagar')
-        .select('*')
+        .select('conta_pagar_id, numero_parcela, sacado, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria, forma_cobranca, tipo_recebimento')
         .or(`vencimento.lte.${endStr},data_pagamento.lte.${endStr}`)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 

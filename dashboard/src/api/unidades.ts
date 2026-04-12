@@ -5,11 +5,11 @@ export const UnidadesAPI = {
   async listar(): Promise<Unidade[]> {
     const { data, error } = await supabase
       .from('etp_unidades')
-      .select('*')
+      .select('id, cnpj, nome, cor, codigo_sponte, token_sponte, criado_em')
       .order('criado_em', { ascending: true });
 
     if (error) throw error;
-    
+
     // Convert from snake_case to camelCase
     return (data || []).map(row => ({
       id: row.id,
@@ -32,7 +32,7 @@ export const UnidadesAPI = {
         codigo_sponte: unidade.codigoSponte,
         token_sponte: unidade.tokenSponte,
       })
-      .select()
+      .select('id, cnpj, nome, cor, codigo_sponte, token_sponte, criado_em')
       .single();
 
     if (error) throw error;
@@ -59,7 +59,7 @@ export const UnidadesAPI = {
         token_sponte: unidade.tokenSponte,
       })
       .eq('id', id)
-      .select()
+      .select('id, cnpj, nome, cor, codigo_sponte, token_sponte, criado_em')
       .single();
 
     if (error) throw error;

@@ -1,21 +1,28 @@
 import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import UnidadesPage from './pages/UnidadesPage';
 import CategoriasPage from './pages/CategoriasPage';
 import PlanejamentoPage from './pages/PlanejamentoPage';
-import type { AppPage, Unidade } from './types';
+import type { Unidade } from './types';
 import './index.css';
 import { UnidadesAPI } from './api/unidades';
+import { AlertCircle } from 'lucide-react';
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 1000 * 60 * 5, retry: 1 } },
+});
 
 const STORAGE_KEY_ACTIVE = 'etp_active_unidade';
 
-export default function App() {
-  const [currentPage, setCurrentPage] = useState<AppPage>('dashboard');
+function AppShell() {
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
+
   const [activeUnidade, setActiveUnidade] = useState<Unidade | null>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_ACTIVE);
@@ -25,19 +32,17 @@ export default function App() {
     }
   });
 
-  // Carregar unidades do Supabase
   const carregarUnidades = async () => {
     try {
       setLoading(true);
       const data = await UnidadesAPI.listar();
       setUnidades(data);
-      // Atualizar o ativo se ainda existir, ou limpar
       if (activeUnidade) {
         const stillExists = data.find(u => u.id === activeUnidade.id);
         if (!stillExists) setActiveUnidade(null);
         else setActiveUnidade(stillExists);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Erro ao carregar unidades:', err);
       setError('Falha ao conectar com o banco de dados. Verifique suas credenciais do Supabase.');
     } finally {
@@ -45,11 +50,8 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    carregarUnidades();
-  }, []);
+  useEffect(() => { carregarUnidades(); }, []);
 
-  // Persistir unidade ativa localmente (apenas o ID ou objeto)
   useEffect(() => {
     if (activeUnidade) {
       localStorage.setItem(STORAGE_KEY_ACTIVE, JSON.stringify(activeUnidade));
@@ -61,52 +63,57 @@ export default function App() {
   const accentColor = activeUnidade?.cor || '#6366f1';
 
   return (
-    <div className="app-shell">
-      <div className="accent-topbar" style={{ background: accentColor }} />
+    <div className="flex min-h-screen bg-background text-foreground">
+      {/* accent topbar */}
+      <div
+        className="fixed top-0 left-0 right-0 h-[3px] z-[100] transition-all duration-400"
+        style={{ background: accentColor, boxShadow: `0 1px 12px ${accentColor}4d` }}
+      />
 
       <Sidebar
-        currentPage={currentPage}
-        onNavigate={setCurrentPage}
         activeUnidade={activeUnidade}
         unidades={unidades}
         onSelectUnidade={setActiveUnidade}
+        accentColor={accentColor}
       />
 
-      <main className="main-content">
+      <main className="ml-[270px] flex-1 min-h-screen pt-[3px]">
         {error && (
-          <div style={{ padding: '2rem' }}>
-            <div className="error-banner">
+          <div className="p-8">
+            <div className="flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-50 px-5 py-4 text-red-700 text-sm">
+              <AlertCircle size={18} />
               <span>{error}</span>
             </div>
           </div>
         )}
 
-        {currentPage === 'dashboard' && !loading && (
-          <DashboardPage activeUnidade={activeUnidade} accentColor={accentColor} />
-        )}
-        
-        {currentPage === 'categorias' && !loading && (
-          <CategoriasPage
-            unidades={unidades}
-            accentColor={accentColor}
-          />
-        )}
-
-        {currentPage === 'unidades' && (
-          <UnidadesPage
-            unidades={unidades}
-            onUpdateUnidades={carregarUnidades}
-            accentColor={accentColor}
-          />
-        )}
-
-        {currentPage === 'planejamento' && !loading && (
-          <PlanejamentoPage
-            unidades={unidades}
-            accentColor={accentColor}
-          />
+        {!loading && (
+          <Routes>
+            <Route path="/" element={<DashboardPage activeUnidade={activeUnidade} accentColor={accentColor} />} />
+            <Route path="/planejamento" element={<PlanejamentoPage unidades={unidades} accentColor={accentColor} />} />
+            <Route path="/categorias" element={<CategoriasPage unidades={unidades} accentColor={accentColor} />} />
+            <Route path="/unidades" element={<UnidadesPage unidades={unidades} onUpdateUnidades={carregarUnidades} accentColor={accentColor} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         )}
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppShell />
+        <Toaster
+          theme="light"
+          position="top-right"
+          toastOptions={{
+            style: { background: '#ffffff', border: '1px solid hsl(214 20% 88%)', color: 'hsl(222 47% 11%)' },
+          }}
+        />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

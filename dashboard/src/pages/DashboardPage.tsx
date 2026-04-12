@@ -1,32 +1,35 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList,
+  Line, ComposedChart
 } from 'recharts';
 import {
-  FileText, AlertCircle, DollarSign, Calendar, Filter, RefreshCw, TrendingUp, Hash, Wifi, WifiOff, Star
+  FileText, AlertCircle, DollarSign, Calendar, Filter, RefreshCw, TrendingUp, Hash,
+  Wifi, WifiOff, Star, ChevronDown
 } from 'lucide-react';
 import type { Unidade, ParcelaPagar } from '../types';
 import { SyncAPI } from '../api/sync';
 import { ContasPagarAPI } from '../api/contasPagar';
 import { FavoritosAPI } from '../api/favoritos';
+import { PlanejamentoAPI } from '../api/planejamento';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-// ─────────────────────────────────────────────
-// XML Parser (robust)
-// ─────────────────────────────────────────────
+// ── XML Parser ──────────────────────────────────────────────────────────────
 const PARCELA_FIELDS = [
   'ContaPagarID', 'NumeroParcela', 'Sacado', 'SituacaoParcela',
   'Vencimento', 'Categoria', 'ContaID', 'TipoRecebimento',
   'FormaCobranca', 'DataPagamento', 'RetornoOperacao'
 ] as const;
-
 const PARCELA_NUMERIC_FIELDS = ['ValorParcela', 'ValorPago'] as const;
 
 const parseNumericPtBR = (raw: string): number => {
   if (!raw) return 0;
-  const cleaned = raw.includes(',')
-    ? raw.replace(/\./g, '').replace(',', '.')
-    : raw;
+  const cleaned = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw;
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
 };
@@ -34,36 +37,26 @@ const parseNumericPtBR = (raw: string): number => {
 const parseSponteXML = (xmlString: string): ParcelaPagar[] => {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
-  const parseError = xmlDoc.querySelector('parsererror');
-  if (parseError) { console.error('XML Parse Error:', parseError.textContent); return []; }
-
-  const items = Array.from(xmlDoc.getElementsByTagName('wsParcelaPagar'));
-
-  return items.map(item => {
-    const getValue = (tag: string): string =>
-      item.getElementsByTagName(tag)[0]?.textContent?.trim() || '';
-
+  if (xmlDoc.querySelector('parsererror')) return [];
+  return Array.from(xmlDoc.getElementsByTagName('wsParcelaPagar')).map(item => {
+    const getValue = (tag: string) => item.getElementsByTagName(tag)[0]?.textContent?.trim() || '';
     const record: Record<string, string | number> = {};
-    for (const field of PARCELA_FIELDS) record[field] = getValue(field);
-    for (const field of PARCELA_NUMERIC_FIELDS) record[field] = parseNumericPtBR(getValue(field));
-
+    for (const f of PARCELA_FIELDS) record[f] = getValue(f);
+    for (const f of PARCELA_NUMERIC_FIELDS) record[f] = parseNumericPtBR(getValue(f));
     return record as unknown as ParcelaPagar;
   });
 };
 
-// ─────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────
-const fmtBRL = (v: number) =>
-  v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const fmtBRL = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const situationClass = (sit: string): string => {
+const situationVariant = (sit: string): 'success' | 'error' | 'warning' | 'info' | 'category' => {
   const s = sit.toLowerCase();
-  if (s.includes('pag')) return 'situation-paga';
-  if (s.includes('cancel')) return 'situation-cancelada';
-  if (s.includes('atras') || s.includes('vencid')) return 'situation-atrasada';
-  if (s.includes('aberto') || s.includes('pendente')) return 'situation-pendente';
-  return 'situation-default';
+  if (s.includes('pag')) return 'success';
+  if (s.includes('cancel')) return 'error';
+  if (s.includes('atras') || s.includes('vencid')) return 'error';
+  if (s.includes('aberto') || s.includes('pendente')) return 'warning';
+  return 'info';
 };
 
 const MONTH_NAMES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
@@ -74,7 +67,6 @@ const COLORS = [
   '#d946ef', '#f97316'
 ];
 
-// Gera lista de datas DD/MM/YYYY entre duas datas ISO
 function getDatesInRange(startISO: string, endISO: string): string[] {
   const result: string[] = [];
   const cur = new Date(startISO);
@@ -82,24 +74,14 @@ function getDatesInRange(startISO: string, endISO: string): string[] {
   while (cur <= end) {
     const dd = String(cur.getDate()).padStart(2, '0');
     const mm = String(cur.getMonth() + 1).padStart(2, '0');
-    const yyyy = cur.getFullYear();
-    result.push(`${dd}/${mm}/${yyyy}`);
+    result.push(`${dd}/${mm}/${cur.getFullYear()}`);
     cur.setDate(cur.getDate() + 1);
   }
   return result;
 }
 
-// ─────────────────────────────────────────────
-// Props
-// ─────────────────────────────────────────────
-interface Props {
-  activeUnidade: Unidade | null;
-  accentColor: string;
-}
+interface Props { activeUnidade: Unidade | null; accentColor: string; }
 
-// ═════════════════════════════════════════════
-// Dashboard Component
-// ═════════════════════════════════════════════
 export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   const [data, setData] = useState<ParcelaPagar[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,8 +90,15 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   const [dataSource, setDataSource] = useState<'api' | 'mock' | null>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
-  const [startDate, setStartDate] = useState('2026-02-01');
-  const [endDate, setEndDate] = useState('2026-02-28');
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    const s = new Date(d.getFullYear(), d.getMonth() - 11, 1);
+    return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [apenasF, setApenasF] = useState(false);
   const [favoritos, setFavoritos] = useState<Set<string>>(new Set());
@@ -117,16 +106,13 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [catDropdownOpen, setCatDropdownOpen] = useState(false);
   const [tablePage, setTablePage] = useState(0);
+  const [planejamentoMensal, setPlanejamentoMensal] = useState<Record<string, number>>({});
   const PAGE_SIZE = 20;
 
-  // Carrega favoritos do banco
   useEffect(() => {
-    FavoritosAPI.listar()
-      .then(lista => setFavoritos(new Set(lista)))
-      .catch(console.error);
+    FavoritosAPI.listar().then(lista => setFavoritos(new Set(lista))).catch(console.error);
   }, []);
 
-  // ── Database Load ──
   const loadDataFromDB = useCallback(async () => {
     setLoading(true);
     setLoadingProgress('Carregando dados locais armazenados...');
@@ -134,31 +120,24 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
       const dbData = await ContasPagarAPI.listar(activeUnidade?.id || null, startDate, endDate);
       setData(dbData);
       setDataSource('api');
-      setLoading(false);
-      setLoadingProgress('');
     } catch (err) {
       console.error('Erro local:', err);
-      // Se der erro, mantemos o estado carregando falso
+    } finally {
       setLoading(false);
+      setLoadingProgress('');
     }
   }, [activeUnidade, startDate, endDate]);
 
-  // ── Sync with Sponte/Supabase ──
   const syncSponteToDB = useCallback(async () => {
     const unitId = activeUnidade?.id;
     if (!unitId) return;
-
     setLoading(true);
     setError('');
-    
     const codigoCliente = activeUnidade?.codigoSponte || '35695';
     const token = activeUnidade?.tokenSponte || 'fxW1Et2vS8Vf';
-
     try {
-      // 1. Buscar e já Salvar PENDENTES
       const currentYear = new Date().getFullYear();
       setLoadingProgress('Buscando e salvando contas pendentes...');
-      
       const pendentesRes = await axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
         params: {
           nCodigoCliente: codigoCliente, sToken: token,
@@ -169,37 +148,24 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
       if (pendentes.length > 0) {
         setLoadingProgress(`Salvando ${pendentes.length} contas pendentes no banco...`);
         await SyncAPI.syncContasPagar(unitId, pendentes);
-        await loadDataFromDB(); // Atualiza a tela
+        await loadDataFromDB();
       }
-
-      // 2. Buscar PAGAS/QUITADAS por dia e já salvar
-      // Garantir pelo menos os últimos 12 meses (para fechar o gráfico) 
-      // ou o período selecionado, evitando "buracos" de dados.
       const today = new Date();
       const retro11 = new Date(today.getFullYear(), today.getMonth() - 11, 1);
-      
-      // Criar datas locais de formatação para evitar bugs de fuso horário
       const buildLocalISO = (d: Date) => {
         const dd = String(d.getDate()).padStart(2, '0');
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         return `${d.getFullYear()}-${mm}-${dd}`;
       };
-
-      const startD = new Date(startDate);
-      startD.setHours(12, 0, 0, 0);
-      const endD = new Date(endDate);
-      endD.setHours(12, 0, 0, 0);
-
+      const startD = new Date(startDate); startD.setHours(12, 0, 0, 0);
+      const endD = new Date(endDate); endD.setHours(12, 0, 0, 0);
       const syncStart = startD < retro11 ? startD : retro11;
       const syncEnd = endD > today ? endD : today;
-
       const datas = getDatesInRange(buildLocalISO(syncStart), buildLocalISO(syncEnd));
-      const BATCH = 5; // Lote maior para acelerar a busca de 1 ano
-
+      const BATCH = 5;
       for (let i = 0; i < datas.length; i += BATCH) {
         const batch = datas.slice(i, i + BATCH);
-        setLoadingProgress(`Sincronizando dias ${Math.min(i + BATCH, datas.length)} de ${datas.length}: baixando e salvando...`);
-        
+        setLoadingProgress(`Sincronizando dias ${Math.min(i + BATCH, datas.length)} de ${datas.length}...`);
         const batchResults = await Promise.all(
           batch.map(data =>
             axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
@@ -209,19 +175,17 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             .catch(() => [] as ParcelaPagar[])
           )
         );
-        
         const pagasNoLote = batchResults.flat();
         if (pagasNoLote.length > 0) {
-           await SyncAPI.syncContasPagar(unitId, pagasNoLote);
-           await loadDataFromDB(); // Atualiza a tela enquanto baixa
+          await SyncAPI.syncContasPagar(unitId, pagasNoLote);
+          await loadDataFromDB();
         }
       }
-
       setLastSync(new Date());
       await SyncAPI.logSync(unitId, 'sincronizacao_painel', 'sucesso', pendentes.length);
-    } catch (err: any) {
-      const msg = err?.response?.status ? `Erro HTTP ${err.response.status}` : err?.message || 'Erro desconhecido';
-      console.error('Falha na Sincronização:', err);
+    } catch (err: unknown) {
+      const e = err as { response?: { status?: number }; message?: string };
+      const msg = e?.response?.status ? `Erro HTTP ${e.response.status}` : e?.message || 'Erro desconhecido';
       setError(`Erro ao sincronizar com Sponte: ${msg}`);
       await SyncAPI.logSync(unitId, 'sincronizacao_painel', 'erro', 0, msg);
     } finally {
@@ -230,13 +194,29 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
     }
   }, [activeUnidade, startDate, endDate, loadDataFromDB]);
 
-  // Carrega do DB toda vez que o componente monta ou as datas/unidade mudam
   useEffect(() => { loadDataFromDB(); }, [loadDataFromDB]);
-  
-  // Reseta paginação se mudar filtro
+
+  useEffect(() => {
+    const today = new Date();
+    const meses: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
+      meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    const unidadeIds = activeUnidade ? [activeUnidade.id] : [];
+    if (!unidadeIds.length) { setPlanejamentoMensal({}); return; }
+    PlanejamentoAPI.totaisMensais(unidadeIds, meses).then(setPlanejamentoMensal).catch(() => setPlanejamentoMensal({}));
+  }, [activeUnidade]);
+
   useEffect(() => { setTablePage(0); }, [startDate, endDate, selectedCategory, selectedSituations, apenasF]);
 
-  // ── Derived Data ──
+  const parseDatePtBR = (s: string): Date | null => {
+    if (!s) return null;
+    const p = s.split('/');
+    if (p.length === 3) return new Date(+p[2], +p[1] - 1, +p[0]);
+    return new Date(s);
+  };
+
   const availableCategories = useMemo(() => {
     const cats = new Set(data.map(d => d.Categoria).filter(Boolean));
     return ['Todas', ...Array.from(cats).sort()];
@@ -247,463 +227,295 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
     return Array.from(sits).sort();
   }, [data]);
 
-  // Converte DD/MM/YYYY para Date
-  const parseDatePtBR = (s: string): Date | null => {
-    if (!s) return null;
-    const parts = s.split('/');
-    if (parts.length === 3) return new Date(+parts[2], +parts[1] - 1, +parts[0]);
-    return new Date(s);
-  };
-
   const filteredData = useMemo(() => {
     const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
+    const end = new Date(endDate); end.setHours(23, 59, 59, 999);
     let result = data.filter(item => {
-      // Para pagas: filtrar por DataPagamento
       if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
         const d = parseDatePtBR(item.DataPagamento);
         return d ? d >= start && d <= end : false;
       }
-      // Para pendentes: filtrar por Vencimento
       if (!item.Vencimento) return false;
       const vencDate = new Date(item.Vencimento);
       return vencDate >= start && vencDate <= end;
     });
-
-    if (selectedCategory !== 'Todas') {
-      result = result.filter(d => d.Categoria === selectedCategory);
-    }
-    if (apenasF && favoritos.size > 0) {
-      result = result.filter(d => favoritos.has(d.Categoria));
-    }
-    if (selectedSituations.length > 0) {
-      result = result.filter(d => selectedSituations.includes(d.SituacaoParcela || 'Sem Status'));
-    }
+    if (selectedCategory !== 'Todas') result = result.filter(d => d.Categoria === selectedCategory);
+    if (apenasF && favoritos.size > 0) result = result.filter(d => favoritos.has(d.Categoria));
+    if (selectedSituations.length > 0) result = result.filter(d => selectedSituations.includes(d.SituacaoParcela || 'Sem Status'));
     return result;
   }, [data, startDate, endDate, selectedCategory, apenasF, favoritos, selectedSituations]);
 
   const categoryDataArray = useMemo(() => {
     const agg = filteredData.reduce((acc, curr) => {
       const cat = curr.Categoria || 'Outros';
-      // Para pagas: usar ValorPago; para pendentes: usar ValorParcela
-      const val = (curr.SituacaoParcela && curr.SituacaoParcela !== 'Pendente' && curr.ValorPago > 0)
-        ? curr.ValorPago
-        : curr.ValorParcela;
+      const val = (curr.SituacaoParcela && curr.SituacaoParcela !== 'Pendente' && curr.ValorPago > 0) ? curr.ValorPago : curr.ValorParcela;
       acc[cat] = (acc[cat] || 0) + val;
       return acc;
     }, {} as Record<string, number>);
-    return Object.entries(agg)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+    return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [filteredData]);
 
   const monthlyDataArray = useMemo(() => {
-    // Mostrar evolução dos últimos 12 meses baseado em DataPagamento (pagas) ou Vencimento (pendentes)
     const today = new Date();
     const twelveMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 11, 1);
     const endOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
-
     const agg: Record<string, number> = {};
     for (const item of data) {
       if (selectedCategory !== 'Todas' && item.Categoria !== selectedCategory) continue;
       if (selectedSituations.length > 0 && !selectedSituations.includes(item.SituacaoParcela || 'Sem Status')) continue;
       let refDate: Date | null = null;
-      if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
-        refDate = parseDatePtBR(item.DataPagamento);
-      } else if (item.Vencimento) {
-        refDate = new Date(item.Vencimento);
-      }
+      if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) refDate = parseDatePtBR(item.DataPagamento);
+      else if (item.Vencimento) refDate = new Date(item.Vencimento);
       if (!refDate || refDate < twelveMonthsAgo || refDate > endOfThisMonth) continue;
       const key = `${MONTH_NAMES[refDate.getMonth()]}/${refDate.getFullYear()}`;
-      const val = (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.ValorPago > 0)
-        ? item.ValorPago : item.ValorParcela;
+      const val = (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.ValorPago > 0) ? item.ValorPago : item.ValorParcela;
       agg[key] = (agg[key] || 0) + val;
     }
-
     return Array.from({ length: 12 }).map((_, i) => {
       const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
       const key = `${MONTH_NAMES[d.getMonth()]}/${d.getFullYear()}`;
-      return { name: key, value: agg[key] || 0 };
+      const mesKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return { name: key, value: agg[key] || 0, planejado: planejamentoMensal[mesKey] || null };
     });
-  }, [data, selectedCategory, selectedSituations]);
+  }, [data, selectedCategory, selectedSituations, planejamentoMensal]);
 
   const pagasNoP = useMemo(() => filteredData.filter(i => i.SituacaoParcela && i.SituacaoParcela !== 'Pendente'), [filteredData]);
   const pendentesNoP = useMemo(() => filteredData.filter(i => !i.SituacaoParcela || i.SituacaoParcela === 'Pendente'), [filteredData]);
   const totalPago = useMemo(() => pagasNoP.reduce((s, i) => s + (i.ValorPago || i.ValorParcela), 0), [pagasNoP]);
   const totalPendente = useMemo(() => pendentesNoP.reduce((s, i) => s + i.ValorParcela, 0), [pendentesNoP]);
   const uniqueCategories = useMemo(() => new Set(filteredData.map(d => d.Categoria)).size, [filteredData]);
-
-  const pagedData = useMemo(() => {
-    const start = tablePage * PAGE_SIZE;
-    return filteredData.slice(start, start + PAGE_SIZE);
-  }, [filteredData, tablePage]);
+  const pagedData = useMemo(() => filteredData.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE), [filteredData, tablePage]);
   const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
 
-  // ── Render ──
+  const tooltipStyle = { backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '8px', color: '#1e293b', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' };
+
   return (
-    <div className="page-content">
-      {/* Page Header */}
-      <header className="header">
-        <div className="header-info">
-          <h1 style={{
-            background: `linear-gradient(135deg, ${accentColor}, ${accentColor}aa)`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}>
+    <div className="max-w-[1440px] mx-auto px-10 py-8 animate-fade-in">
+      {/* Header */}
+      <header className="flex justify-between items-start mb-8 pb-6 border-b border-border/50 flex-wrap gap-4">
+        <div>
+          <h1 className="text-[1.75rem] font-extrabold tracking-tight flex items-center gap-3 flex-wrap"
+            style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}aa)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
             Dashboard · Contas a Pagar
-            <span className="header-unit-tag" style={{ background: `${accentColor}22`, color: accentColor, marginLeft: '12px', fontSize:'0.9rem', padding: '4px 10px', borderRadius:'12px' }}>
+            <span className="text-[0.82rem] font-semibold px-3 py-1 rounded-full" style={{ background: `${accentColor}18`, color: accentColor, border: `1px solid ${accentColor}30`, WebkitTextFillColor: accentColor }}>
               {activeUnidade ? activeUnidade.nome : 'Todas as Unidades'}
             </span>
           </h1>
-          <p className="header-subtitle">
-            {dataSource === 'api' ? (
-              <span className="source-badge api"><Wifi size={14} /> Dados do Banco Local</span>
-            ) : dataSource === 'mock' ? (
-              <span className="source-badge mock"><WifiOff size={14} /> Dados de Demonstração</span>
-            ) : null}
-            {lastSync && (
-              <span className="sync-time">Sincronizado às {lastSync.toLocaleTimeString('pt-BR')}</span>
+          <div className="flex items-center gap-4 mt-2 text-sm">
+            {dataSource === 'api' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
+                <Wifi size={13} /> Dados do Banco Local
+              </span>
             )}
-          </p>
+            {dataSource === 'mock' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/12 text-amber-400 border border-amber-500/20 text-xs font-semibold">
+                <WifiOff size={13} /> Dados de Demonstração
+              </span>
+            )}
+            {lastSync && <span className="text-muted-foreground text-xs">Sincronizado às {lastSync.toLocaleTimeString('pt-BR')}</span>}
+          </div>
         </div>
 
-        <div className="header-actions">
-          <div className="filter-group" style={{ position: 'relative' }}>
-            <Filter size={16} />
-            <div 
-              className="category-filter" 
-              style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '160px', justifyContent: 'space-between', padding: '0 8px' }}
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-            >
+        <div className="flex items-center gap-2 flex-wrap relative z-[15]">
+          {/* Situation filter */}
+          <div className="relative flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg text-muted-foreground backdrop-blur focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+            <Filter size={15} />
+            <button className="flex items-center gap-2 text-sm cursor-pointer min-w-[160px] justify-between" onClick={() => setDropdownOpen(o => !o)}>
               <span>{selectedSituations.length === 0 ? 'Todas as Situações' : `${selectedSituations.length} selecionada(s)`}</span>
-              <span style={{ fontSize: '10px' }}>▼</span>
-            </div>
+              <ChevronDown size={13} />
+            </button>
             {dropdownOpen && (
-              <div className="dropdown-menu" style={{
-                position: 'absolute', top: '100%', left: 0, marginTop: '8px', background: '#1e293b', 
-                border: '1px solid #334155', borderRadius: '8px', padding: '8px', zIndex: 50, 
-                minWidth: '200px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '4px'
-              }}>
-                {availableSituations.map((sit: string) => {
-                  const isChecked = selectedSituations.includes(sit);
-                  return (
-                    <label key={sit} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', cursor: 'pointer', color: '#e2e8f0', fontSize: '0.85rem' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={isChecked}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          setSelectedSituations(prev => 
-                            isChecked ? prev.filter(s => s !== sit) : [...prev, sit]
-                          );
-                        }}
-                        style={{ accentColor: accentColor }}
-                      />
-                      {sit}
-                    </label>
-                  );
-                })}
+              <div className="absolute top-[calc(100%+6px)] left-0 bg-popover border border-border rounded-xl p-1.5 z-[60] min-w-[220px] max-h-[360px] overflow-y-auto shadow-2xl animate-in fade-in-0 zoom-in-95 duration-150">
+                {availableSituations.map(sit => (
+                  <label key={sit} className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg cursor-pointer text-sm text-foreground hover:bg-black/5 transition-colors">
+                    <input type="checkbox" checked={selectedSituations.includes(sit)} style={{ accentColor }}
+                      onChange={() => setSelectedSituations(prev => prev.includes(sit) ? prev.filter(s => s !== sit) : [...prev, sit])} />
+                    {sit}
+                  </label>
+                ))}
               </div>
             )}
           </div>
 
-          {/* ── Filtro de Categorias (com favoritas) ── */}
-          <div className="filter-group" style={{ position: 'relative' }}>
-            {apenasF
-              ? <Star size={15} fill="#f59e0b" style={{ color: '#f59e0b', flexShrink: 0 }} />
-              : <Filter size={16} style={{ flexShrink: 0 }} />
-            }
-            <div
-              className="category-filter"
-              style={{
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                minWidth: '200px',
-                justifyContent: 'space-between',
-                padding: '0 8px',
-                color: apenasF ? '#f59e0b' : 'inherit',
-                fontWeight: apenasF ? 600 : 400,
-              }}
+          {/* Category filter */}
+          <div className="relative flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg backdrop-blur transition-all">
+            {apenasF ? <Star size={14} fill="#f59e0b" className="text-amber-400 flex-shrink-0" /> : <Filter size={15} className="text-muted-foreground flex-shrink-0" />}
+            <button
+              className={cn("flex items-center gap-2 text-sm cursor-pointer min-w-[200px] justify-between", apenasF ? "text-amber-400 font-semibold" : "text-muted-foreground")}
               onClick={() => setCatDropdownOpen(o => !o)}
             >
-              <span>
-                {apenasF
-                  ? `★ Favoritas (${favoritos.size})`
-                  : selectedCategory === 'Todas'
-                  ? 'Todas as Categorias'
-                  : selectedCategory}
-              </span>
-              <span style={{ fontSize: '10px' }}>▼</span>
-            </div>
-
+              <span>{apenasF ? `★ Favoritas (${favoritos.size})` : selectedCategory === 'Todas' ? 'Todas as Categorias' : selectedCategory}</span>
+              <ChevronDown size={13} />
+            </button>
             {catDropdownOpen && (
-              <div style={{
-                position: 'absolute', top: '100%', left: 0, marginTop: '8px',
-                background: '#1e293b', border: '1px solid #334155', borderRadius: '10px',
-                padding: '6px', zIndex: 50, minWidth: '240px',
-                boxShadow: '0 20px 40px -8px rgba(0,0,0,0.7)',
-                maxHeight: '340px', overflowY: 'auto',
-              }}>
-                {/* Opção: Todas */}
-                <button
-                  onClick={() => { setSelectedCategory('Todas'); setApenasF(false); setCatDropdownOpen(false); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
-                    padding: '7px 10px', borderRadius: '7px', border: 'none',
-                    background: !apenasF && selectedCategory === 'Todas' ? 'rgba(99,102,241,0.15)' : 'transparent',
-                    color: !apenasF && selectedCategory === 'Todas' ? '#6366f1' : '#e2e8f0',
-                    fontWeight: !apenasF && selectedCategory === 'Todas' ? 600 : 400,
-                    cursor: 'pointer', fontSize: '0.85rem', textAlign: 'left',
-                    fontFamily: 'Inter, sans-serif',
-                  }}
-                >
-                  Todas as Categorias
-                </button>
-
-                {/* Opção: Apenas Favoritas */}
+              <div className="absolute top-[calc(100%+6px)] left-0 bg-popover border border-border rounded-xl p-1.5 z-[60] min-w-[260px] max-h-[360px] overflow-y-auto shadow-2xl animate-in fade-in-0 zoom-in-95 duration-150">
+                <button className={cn("flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors", !apenasF && selectedCategory === 'Todas' ? 'bg-primary/15 text-primary font-semibold' : 'text-foreground hover:bg-black/5')} onClick={() => { setSelectedCategory('Todas'); setApenasF(false); setCatDropdownOpen(false); }}>Todas as Categorias</button>
                 {favoritos.size > 0 && (
-                  <button
-                    onClick={() => { setApenasF(true); setSelectedCategory('Todas'); setCatDropdownOpen(false); }}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
-                      padding: '7px 10px', borderRadius: '7px', border: 'none',
-                      background: apenasF ? 'rgba(245,158,11,0.15)' : 'transparent',
-                      color: '#f59e0b',
-                      fontWeight: apenasF ? 700 : 600,
-                      cursor: 'pointer', fontSize: '0.85rem', textAlign: 'left',
-                      fontFamily: 'Inter, sans-serif',
-                      borderTop: '1px solid #334155',
-                      marginTop: '4px', paddingTop: '8px',
-                    }}
-                  >
-                    <Star size={14} fill={apenasF ? '#f59e0b' : 'none'} />
-                    Apenas Favoritas ({favoritos.size})
+                  <button className={cn("flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors text-amber-400", apenasF ? 'bg-amber-500/15 font-bold' : 'hover:bg-black/5')} onClick={() => { setApenasF(true); setSelectedCategory('Todas'); setCatDropdownOpen(false); }}>
+                    <Star size={13} fill={apenasF ? '#f59e0b' : 'none'} /> Apenas Favoritas ({favoritos.size})
                   </button>
                 )}
-
-                {/* Separador */}
-                <div style={{ height: '1px', background: '#334155', margin: '6px 0' }} />
-
-                {/* Lista de categorias */}
-                {availableCategories.filter(c => c !== 'Todas').map(cat => {
-                  const isFav = favoritos.has(cat);
-                  const isActive = !apenasF && selectedCategory === cat;
-                  return (
-                    <button
-                      key={cat}
-                      onClick={() => { setSelectedCategory(cat); setApenasF(false); setCatDropdownOpen(false); }}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '7px', width: '100%',
-                        padding: '6px 10px', borderRadius: '7px', border: 'none',
-                        background: isActive ? 'rgba(99,102,241,0.15)' : 'transparent',
-                        color: isActive ? '#6366f1' : '#e2e8f0',
-                        fontWeight: isActive ? 600 : 400,
-                        cursor: 'pointer', fontSize: '0.83rem', textAlign: 'left',
-                        fontFamily: 'Inter, sans-serif',
-                      }}
-                    >
-                      {isFav && <Star size={11} fill="#f59e0b" style={{ color: '#f59e0b', flexShrink: 0 }} />}
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat}</span>
-                    </button>
-                  );
-                })}
+                <div className="h-px bg-border my-1.5" />
+                {availableCategories.filter(c => c !== 'Todas').map(cat => (
+                  <button key={cat} className={cn("flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-sm text-left transition-colors truncate", !apenasF && selectedCategory === cat ? 'bg-primary/15 text-primary font-semibold' : 'text-foreground hover:bg-black/5')} onClick={() => { setSelectedCategory(cat); setApenasF(false); setCatDropdownOpen(false); }}>
+                    {favoritos.has(cat) && <Star size={11} fill="#f59e0b" className="text-amber-400 flex-shrink-0" />}
+                    <span className="truncate">{cat}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          <div className="filter-group">
-            <Calendar size={16} />
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="date-input" />
-            <span className="filter-separator">até</span>
-            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="date-input" />
+          {/* Date range */}
+          <div className="flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg text-muted-foreground backdrop-blur focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+            <Calendar size={15} />
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-transparent text-foreground border-none outline-none text-sm cursor-text color-scheme-light w-[130px]" />
+            <span className="text-muted-foreground text-xs">até</span>
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-transparent text-foreground border-none outline-none text-sm cursor-text color-scheme-light w-[130px]" />
           </div>
 
-          <button
+          <Button
             onClick={activeUnidade ? syncSponteToDB : () => alert('Para baixar novas contas da Sponte, selecione uma escola específica no menu à esquerda.')}
-            className="refresh-btn"
             disabled={loading}
-            style={{ background: accentColor, boxShadow: `0 4px 6px -1px ${accentColor}55` }}
+            className="gap-2 font-semibold"
+            style={{ background: accentColor, boxShadow: `0 4px 14px -4px ${accentColor}66` }}
           >
-            <RefreshCw size={16} className={loading ? 'spin' : ''} />
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
             Sincronizar
-          </button>
+          </Button>
         </div>
       </header>
 
       {error && (
-        <div className="error-banner">
-          <AlertCircle size={20} />
-          <span>{error}</span>
+        <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-red-700 text-sm mb-6">
+          <AlertCircle size={18} /> <span>{error}</span>
         </div>
       )}
 
       {loading ? (
-        <div className="loading-state">
-          <div className="spinner" style={{ borderTopColor: accentColor }} />
-          <p>Conectando à API Sponte Educacional...</p>
-          {loadingProgress && <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '8px' }}>{loadingProgress}</p>}
+        <div className="flex flex-col items-center justify-center h-[400px] gap-4">
+          <div className="w-11 h-11 rounded-full border-[3px] border-primary/20 animate-spin" style={{ borderTopColor: accentColor }} />
+          <p className="text-muted-foreground">Conectando à API Sponte Educacional...</p>
+          {loadingProgress && <p className="text-sm text-muted-foreground/70">{loadingProgress}</p>}
         </div>
       ) : (
         <>
-          {/* Stats Cards */}
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-icon bg-blue"><FileText size={24} /></div>
-              <div className="stat-details"><h3>Total no Período</h3><p>{filteredData.length} registros</p></div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon bg-green"><DollarSign size={24} /></div>
-              <div className="stat-details">
-                <h3>Total Pago / Quitado</h3>
-                <p>R$ {fmtBRL(totalPago)}</p>
-                <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{pagasNoP.length} parcelas</small>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon bg-yellow"><TrendingUp size={24} /></div>
-              <div className="stat-details">
-                <h3>Total Pendente</h3>
-                <p>R$ {fmtBRL(totalPendente)}</p>
-                <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{pendentesNoP.length} parcelas</small>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon bg-purple"><Hash size={24} /></div>
-              <div className="stat-details"><h3>Categorias</h3><p>{uniqueCategories}</p></div>
-            </div>
+          {/* Stats Grid */}
+          <div className="grid grid-cols-4 gap-4 mb-8 max-[1100px]:grid-cols-2 max-[600px]:grid-cols-1">
+            {[
+              { icon: <FileText size={22} />, color: 'bg-blue-500/15 text-blue-400', label: 'Total no Período', value: `${filteredData.length} registros` },
+              { icon: <DollarSign size={22} />, color: 'bg-emerald-100 text-emerald-700', label: 'Total Pago / Quitado', value: `R$ ${fmtBRL(totalPago)}`, sub: `${pagasNoP.length} parcelas` },
+              { icon: <TrendingUp size={22} />, color: 'bg-amber-100 text-amber-700', label: 'Total Pendente', value: `R$ ${fmtBRL(totalPendente)}`, sub: `${pendentesNoP.length} parcelas` },
+              { icon: <Hash size={22} />, color: 'bg-violet-500/15 text-violet-400', label: 'Categorias', value: `${uniqueCategories}` },
+            ].map((card, idx) => (
+              <Card key={idx} className={cn("flex items-center gap-5 px-6 py-5 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl", `animate-fade-in-up`)} style={{ animationDelay: `${idx * 80}ms` }}>
+                <div className={cn("w-[52px] h-[52px] rounded-xl flex items-center justify-center flex-shrink-0 relative", card.color)}>
+                  <div className="absolute inset-[-2px] rounded-xl opacity-40 blur-[10px]" style={{ background: 'inherit' }} />
+                  {card.icon}
+                </div>
+                <div>
+                  <p className="text-[0.7rem] text-muted-foreground font-semibold uppercase tracking-[0.08em] mb-1">{card.label}</p>
+                  <p className="text-[1.5rem] font-bold text-foreground tabular-nums tracking-tight">{card.value}</p>
+                  {card.sub && <p className="text-xs text-muted-foreground">{card.sub}</p>}
+                </div>
+              </Card>
+            ))}
           </div>
 
           {/* Charts */}
-          <div className="charts-grid">
-            <div className="chart-card" style={{ gridColumn: 'span 2' }}>
-              <h2>
+          <div className="grid grid-cols-1 gap-6 mb-8">
+            {/* Monthly chart */}
+            <Card className="p-6 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+              <h2 className="text-base font-bold mb-5 flex items-center gap-3">
                 Evolução Mensal · Últimos 12 Meses
-                {selectedCategory !== 'Todas' && <span className="chart-filter-tag">{selectedCategory}</span>}
+                {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20">{selectedCategory}</Badge>}
               </h2>
-              <div className="chart-wrapper" style={{ height: '400px' }}>
+              <div style={{ height: 400 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyDataArray} margin={{ top: 25, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                    <YAxis stroke="#cbd5e1" tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
-                    <Tooltip
-                      formatter={(value: any) => [`R$ ${fmtBRL(Number(value))}`, 'Valor']}
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                      contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc' }}
-                    />
+                  <ComposedChart data={monthlyDataArray} margin={{ top: 25, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11, fill: '#64748b' }} />
+                    <YAxis stroke="#94a3b8" tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
+                    <Tooltip formatter={(value, name) => { if (value == null) return [null, null]; return [`R$ ${fmtBRL(Number(value))}`, name === 'planejado' ? 'Planejado' : 'Realizado']; }} cursor={{ fill: 'rgba(0,0,0,0.04)' }} contentStyle={tooltipStyle} />
                     <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={55}>
-                      {monthlyDataArray.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                      <LabelList
-                        dataKey="value"
-                        position="top"
-                        formatter={(v: any) => Number(v) > 0 ? `R$ ${fmtBRL(Number(v))}` : ''}
-                        style={{ fill: '#e2e8f0', fontSize: '10px', fontWeight: 500 }}
-                      />
+                      {monthlyDataArray.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                      <LabelList dataKey="value" position="top" formatter={(v: unknown) => Number(v) > 0 ? `R$ ${fmtBRL(Number(v))}` : ''} style={{ fill: '#475569', fontSize: '10px', fontWeight: 500 }} />
                     </Bar>
-                  </BarChart>
+                    <Line dataKey="planejado" type="monotone" stroke={accentColor} strokeWidth={2.5} dot={{ r: 5, fill: accentColor, stroke: '#ffffff', strokeWidth: 2 }} activeDot={{ r: 7, fill: accentColor, stroke: '#fff', strokeWidth: 2 }} connectNulls={false} name="planejado" />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            </Card>
 
-            <div className="chart-card" style={{ gridColumn: 'span 2' }}>
-              <h2>Gastos por Categoria · Período Selecionado</h2>
-              <div
-                className="chart-wrapper"
-                style={{ height: `${Math.max(400, categoryDataArray.length * 38)}px`, minHeight: '400px' }}
-              >
+            {/* Category chart */}
+            <Card className="p-6 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '350ms' }}>
+              <h2 className="text-base font-bold mb-5">Gastos por Categoria · Período Selecionado</h2>
+              <div style={{ height: Math.max(400, categoryDataArray.length * 38) }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryDataArray} layout="vertical" margin={{ top: 10, right: 140, left: 220, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#334155" />
-                    <XAxis type="number" stroke="#94a3b8" tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
-                    <YAxis dataKey="name" type="category" stroke="#cbd5e1" width={210} tick={{ fontSize: 12 }} interval={0} />
-                    <Tooltip
-                      formatter={(value: any) => [`R$ ${fmtBRL(Number(value))}`, 'Valor']}
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                      contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc' }}
-                    />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                    <XAxis type="number" stroke="#94a3b8" tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fill: '#475569', fontSize: 12 }} width={210} interval={0} />
+                    <Tooltip formatter={(value) => [`R$ ${fmtBRL(Number(value))}`, 'Valor']} cursor={{ fill: 'rgba(0,0,0,0.04)' }} contentStyle={tooltipStyle} />
                     <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
-                      {categoryDataArray.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                      <LabelList
-                        dataKey="value"
-                        position="right"
-                        formatter={(v: any) => `R$ ${fmtBRL(Number(v))}`}
-                        style={{ fill: '#e2e8f0', fontSize: '11px', fontWeight: 500 }}
-                      />
+                      {categoryDataArray.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                      <LabelList dataKey="value" position="right" formatter={(v: unknown) => `R$ ${fmtBRL(Number(v))}`} style={{ fill: '#475569', fontSize: '11px', fontWeight: 500 }} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            </Card>
           </div>
 
-          {/* Data Table */}
-          <div className="table-card">
-            <h2>
-              Detalhamento · Período Selecionado
-              <span className="table-count">{filteredData.length} registros</span>
-            </h2>
-            <div className="table-responsive">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Fornecedor / Sacado</th>
-                    <th>Categoria</th>
-                    <th>Parcela</th>
-                    <th>Vencimento</th>
-                    <th>Data Pagamento</th>
-                    <th>Situação</th>
-                    <th className="text-right">Valor (R$)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedData.map((item, idx) => {
-                    const isPaga = item.SituacaoParcela && item.SituacaoParcela !== 'Pendente';
-                    const valorExibir = isPaga && item.ValorPago > 0 ? item.ValorPago : item.ValorParcela;
-                    return (
-                    <tr key={`${item.ContaPagarID}-${idx}`} style={isPaga ? { background: 'rgba(16,185,129,0.04)' } : {}}>
-                      <td className="cell-sacado">{item.Sacado}</td>
-                      <td><span className="badge category-badge">{item.Categoria}</span></td>
-                      <td>{item.NumeroParcela}</td>
-                      <td>{item.Vencimento ? new Date(item.Vencimento).toLocaleDateString('pt-BR') : '—'}</td>
-                      <td style={{ color: isPaga ? '#10b981' : '#64748b', fontSize: '0.85rem' }}>
-                        {item.DataPagamento || '—'}
-                      </td>
-                      <td>
-                        <span className={`badge ${situationClass(item.SituacaoParcela)}`}>
-                          {item.SituacaoParcela || 'Sem Status'}
-                        </span>
-                      </td>
-                      <td className="text-right font-medium cell-valor" style={{ color: isPaga ? '#10b981' : 'inherit' }}>
-                        {fmtBRL(valorExibir)}
-                      </td>
-                    </tr>
-                  )})}
-                  {pagedData.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="empty-row">Nenhum registro encontrado para os filtros aplicados.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+          {/* Table */}
+          <Card className="overflow-hidden animate-fade-in-up" style={{ animationDelay: '400ms' }}>
+            <div className="flex justify-between items-center px-6 py-4 border-b border-border/50">
+              <h2 className="text-base font-bold">Detalhamento · Período Selecionado</h2>
+              <Badge variant="secondary" className="text-primary bg-primary/10 border-primary/15">{filteredData.length} registros</Badge>
             </div>
-
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fornecedor / Sacado</TableHead>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead>Parcela</TableHead>
+                  <TableHead>Vencimento</TableHead>
+                  <TableHead>Data Pagamento</TableHead>
+                  <TableHead>Situação</TableHead>
+                  <TableHead className="text-right">Valor (R$)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedData.map((item, idx) => {
+                  const isPaga = item.SituacaoParcela && item.SituacaoParcela !== 'Pendente';
+                  const valorExibir = isPaga && item.ValorPago > 0 ? item.ValorPago : item.ValorParcela;
+                  return (
+                    <TableRow key={`${item.ContaPagarID}-${idx}`} className={isPaga ? 'bg-emerald-500/[0.04]' : ''}>
+                      <TableCell className="font-medium max-w-[200px] truncate">{item.Sacado}</TableCell>
+                      <TableCell><Badge variant="category">{item.Categoria}</Badge></TableCell>
+                      <TableCell>{item.NumeroParcela}</TableCell>
+                      <TableCell>{item.Vencimento ? new Date(item.Vencimento).toLocaleDateString('pt-BR') : '—'}</TableCell>
+                      <TableCell className={isPaga ? 'text-emerald-700 text-sm font-medium' : 'text-muted-foreground text-sm'}>{item.DataPagamento || '—'}</TableCell>
+                      <TableCell><Badge variant={situationVariant(item.SituacaoParcela || '')}>{item.SituacaoParcela || 'Sem Status'}</Badge></TableCell>
+                      <TableCell className={cn("text-right font-medium tabular-nums", isPaga ? 'text-emerald-700' : 'text-red-600')}>{fmtBRL(valorExibir)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+                {pagedData.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-12">Nenhum registro encontrado para os filtros aplicados.</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
             {totalPages > 1 && (
-              <div className="table-pagination">
-                <button disabled={tablePage === 0} onClick={() => setTablePage(p => p - 1)} className="page-btn">← Anterior</button>
-                <span className="page-info">Página {tablePage + 1} de {totalPages}</span>
-                <button disabled={tablePage >= totalPages - 1} onClick={() => setTablePage(p => p + 1)} className="page-btn">Próxima →</button>
+              <div className="flex justify-center items-center gap-4 px-6 py-4 border-t border-border/50 bg-background/40">
+                <Button variant="outline" size="sm" disabled={tablePage === 0} onClick={() => setTablePage(p => p - 1)}>← Anterior</Button>
+                <span className="text-sm text-muted-foreground">Página {tablePage + 1} de {totalPages}</span>
+                <Button variant="outline" size="sm" disabled={tablePage >= totalPages - 1} onClick={() => setTablePage(p => p + 1)}>Próxima →</Button>
               </div>
             )}
-          </div>
+          </Card>
         </>
       )}
     </div>
