@@ -1,148 +1,263 @@
-import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronRight, Tag, Target } from 'lucide-react';
+import { useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Building2,
+  ChevronRight,
+  Tag,
+  Target,
+  Settings,
+  Palette,
+  BarChart3,
+  RefreshCw,
+  LogOut,
+  User,
+} from 'lucide-react';
+import * as Collapsible from '@radix-ui/react-collapsible';
 import { cn } from '@/lib/utils';
 import type { Unidade } from '../types';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
+import type { LayoutConfig } from '@/hooks/use-layout-config';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarSeparator,
+} from '@/components/ui/sidebar';
 
-interface SidebarProps {
+// ── Props ────────────────────────────────────────────────────────
+
+interface AppSidebarProps {
   activeUnidade: Unidade | null;
-  unidades: Unidade[];
-  onSelectUnidade: (u: Unidade | null) => void;
   accentColor: string;
+  layout: LayoutConfig;
 }
 
-const navItems = [
-  { to: '/', label: 'Dashboard Financeiro', icon: LayoutDashboard },
-  { to: '/planejamento', label: 'Planejamento', icon: Target },
-  { to: '/categorias', label: 'Categorias de Despesas', icon: Tag },
-  { to: '/unidades', label: 'Cadastro de Unidades', icon: Building2 },
+// ── Dados de navegação ───────────────────────────────────────────
+
+const cadastroItems = [
+  { to: '/unidades', label: 'Unidades', icon: Building2 },
+  { to: '/categorias', label: 'Categorias', icon: Tag },
 ];
 
-export default function Sidebar({ activeUnidade, unidades, onSelectUnidade, accentColor }: SidebarProps) {
+const configSubItems = [
+  { to: '/configuracoes/layout', label: 'Layout', icon: Palette },
+  { to: '/configuracoes/graficos', label: 'Gráficos', icon: BarChart3 },
+  { to: '/configuracoes/sincronizar', label: 'Sincronizar', icon: RefreshCw },
+];
+
+// ── Componente auxiliar: NavItem ──────────────────────────────────
+
+function NavItem({
+  to,
+  end,
+  label,
+  icon: Icon,
+}: {
+  to: string;
+  end?: boolean;
+  label: string;
+  icon: React.ElementType;
+}) {
   return (
-    <aside className="dark fixed top-0 left-0 bottom-0 w-[270px] z-50 flex flex-col border-r border-border/50 bg-background/95 backdrop-blur-xl pt-[3px]">
-      {/* subtle right edge gradient */}
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-primary/15 to-transparent" />
+    <SidebarMenuItem>
+      <NavLink to={to} end={end}>
+        {({ isActive }) => (
+          <SidebarMenuButton
+            isActive={isActive}
+            tooltip={label}
+            className={cn(
+              'rounded-lg transition-all',
+              isActive && 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+            )}
+          >
+            <Icon />
+            <span>{label}</span>
+          </SidebarMenuButton>
+        )}
+      </NavLink>
+    </SidebarMenuItem>
+  );
+}
 
-      {/* Logo */}
-      <div className="flex items-center justify-center px-5 py-4 border-b border-border/50">
+// ── Componente principal ─────────────────────────────────────────
+
+export default function AppSidebar({
+  activeUnidade,
+  layout,
+}: AppSidebarProps) {
+  const location = useLocation();
+  const { user, signOut, isAdmin } = useAuth();
+
+  const configOpen = location.pathname.startsWith('/configuracoes');
+  const cadastroActive = ['/unidades', '/categorias'].some(p => location.pathname.startsWith(p));
+  const logoSrc = user?.empresaLogoUrl ?? layout.logoUrl ?? '/etp-logo.png';
+
+  const [cadastroOpen, setCadastroOpen] = useState(true);
+  const [configMenuOpen, setConfigMenuOpen] = useState(true);
+
+  return (
+    <Sidebar collapsible="none" className="border-r-0">
+      {/* ── Logo / Empresa ── */}
+      <SidebarHeader className="items-center justify-center py-5 px-4">
         <img
-          src="/etp-logo.png"
-          alt="ETP"
-          className="max-h-[52px] w-auto object-contain brightness-0 invert opacity-90"
+          src={logoSrc}
+          alt="Logo"
+          className={cn(
+            'max-h-[56px] w-auto object-contain',
+            !user?.empresaLogoUrl && !layout.logoUrl && 'brightness-0 invert opacity-90'
+          )}
         />
-      </div>
+        {user?.empresaNomeFantasia && (
+          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-sidebar-foreground/60 mt-1 text-center truncate w-full">
+            {user.empresaNomeFantasia}
+          </p>
+        )}
+      </SidebarHeader>
 
-      <ScrollArea className="flex-1">
-        {/* Unit selector */}
-        {unidades.length > 0 && (
-          <div className="py-3">
-            <p className="px-5 mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Unidade Ativa
-            </p>
-            <div className="flex flex-col gap-0.5 px-3">
-              <button
-                onClick={() => onSelectUnidade(null)}
-                className={cn(
-                  'flex items-center gap-2.5 w-full px-3 py-2 rounded-lg border text-sm text-left transition-all duration-200',
-                  activeUnidade === null
-                    ? 'border-primary/30 bg-primary/8 text-foreground font-medium'
-                    : 'border-transparent bg-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
-                )}
-              >
-                <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0 shadow-[0_0_6px_currentColor]" />
-                <span>Todas as Unidades</span>
-              </button>
+      <SidebarContent className="px-1">
+        {/* ── Dashboard + Planejamento ── */}
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <NavItem to="/" end label="Dashboard" icon={LayoutDashboard} />
+              <NavItem to="/planejamento" label="Planejamento" icon={Target} />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
-              {unidades.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => onSelectUnidade(u)}
-                  className={cn(
-                    'flex items-center gap-2.5 w-full px-3 py-2 rounded-lg border text-sm text-left transition-all duration-200',
-                    activeUnidade?.id === u.id
-                      ? 'text-foreground font-medium'
-                      : 'border-transparent bg-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
-                  )}
-                  style={
-                    activeUnidade?.id === u.id
-                      ? { borderColor: `${u.cor}44`, background: `${u.cor}11` }
-                      : {}
-                  }
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0 shadow-[0_0_6px_currentColor]"
-                    style={{ background: u.cor, color: u.cor }}
+        <SidebarSeparator />
+
+        {/* ── Cadastro (apenas admin+) ── */}
+        {isAdmin && (
+          <SidebarGroup>
+            <Collapsible.Root
+              open={cadastroOpen || cadastroActive}
+              onOpenChange={setCadastroOpen}
+              className="group/collapsible"
+            >
+              <Collapsible.Trigger asChild>
+                <SidebarGroupLabel className="uppercase text-[0.65rem] tracking-widest cursor-pointer hover:text-sidebar-foreground transition-colors pr-2">
+                  Cadastro
+                  <ChevronRight
+                    size={12}
+                    className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
                   />
-                  <span className="flex-1 truncate">{u.nome}</span>
-                  {activeUnidade?.id === u.id && (
-                    <ChevronRight size={14} style={{ color: u.cor }} className="flex-shrink-0" />
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
+                </SidebarGroupLabel>
+              </Collapsible.Trigger>
+              <Collapsible.Content>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {cadastroItems.map(({ to, label, icon: Icon }) => (
+                      <NavItem key={to} to={to} label={label} icon={Icon} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </Collapsible.Content>
+            </Collapsible.Root>
+          </SidebarGroup>
         )}
 
-        <Separator className="mx-3 w-auto" />
+        {isAdmin && <SidebarSeparator />}
 
-        {/* Navigation */}
-        <nav className="py-3">
-          <p className="px-5 mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Menu
-          </p>
-          <div className="flex flex-col gap-0.5 px-3">
-            {navItems.map(({ to, label, icon: Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-3 px-3 py-[0.7rem] rounded-lg border-l-[3px] text-sm transition-all duration-200',
-                    isActive
-                      ? 'font-semibold'
-                      : 'border-l-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
-                  )
-                }
-                style={({ isActive }) =>
-                  isActive
-                    ? {
-                        background: `${accentColor}18`,
-                        borderLeftColor: accentColor,
-                        color: accentColor,
-                      }
-                    : {}
-                }
-              >
-                <Icon size={18} className="flex-shrink-0" />
-                <span>{label}</span>
-              </NavLink>
-            ))}
-          </div>
-        </nav>
-      </ScrollArea>
+        {/* ── Configurações ── */}
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {/* Configurações (apenas admin+) */}
+              {isAdmin && (
+                <Collapsible.Root open={configMenuOpen || configOpen} onOpenChange={setConfigMenuOpen} className="group/collapsible">
+                  <SidebarMenuItem>
+                    <Collapsible.Trigger asChild>
+                      <SidebarMenuButton
+                        isActive={configOpen}
+                        tooltip="Configurações"
+                        className={cn(
+                          'rounded-lg',
+                          configOpen && 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                        )}
+                      >
+                        <Settings />
+                        <span>Configurações</span>
+                        <ChevronRight
+                          size={14}
+                          className="ml-auto flex-shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+                        />
+                      </SidebarMenuButton>
+                    </Collapsible.Trigger>
 
-      {/* Active unit footer */}
-      {activeUnidade && (
-        <div className="p-3 border-t border-border/50">
-          <div
-            className="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-semibold transition-all duration-300"
-            style={{
-              background: `${activeUnidade.cor}22`,
-              borderColor: `${activeUnidade.cor}44`,
-              color: activeUnidade.cor,
-            }}
-          >
+                    <Collapsible.Content>
+                      <SidebarMenuSub>
+                        {configSubItems.map(({ to, label, icon: Icon }) => (
+                          <SidebarMenuSubItem key={to}>
+                            <NavLink to={to}>
+                              {({ isActive }) => (
+                                <SidebarMenuSubButton
+                                  asChild
+                                  isActive={isActive}
+                                  className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
+                                >
+                                  <span className="flex items-center gap-2 w-full">
+                                    <Icon size={14} className="flex-shrink-0" />
+                                    {label}
+                                  </span>
+                                </SidebarMenuSubButton>
+                              )}
+                            </NavLink>
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    </Collapsible.Content>
+                  </SidebarMenuItem>
+                </Collapsible.Root>
+              )}
+
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      {/* ── Footer: usuario logado + logout ── */}
+      <SidebarFooter className="border-t border-sidebar-border">
+        {activeUnidade && (
+          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-sidebar-accent text-sidebar-accent-foreground text-sm font-semibold mb-1">
             <span
-              className="w-2 h-2 rounded-full flex-shrink-0 shadow-[0_0_6px_currentColor]"
-              style={{ background: activeUnidade.cor }}
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ background: activeUnidade.cor, boxShadow: `0 0 8px ${activeUnidade.cor}` }}
             />
             <span className="truncate">{activeUnidade.nome}</span>
           </div>
-        </div>
-      )}
-    </aside>
+        )}
+
+        {user && (
+          <div className="flex items-center gap-2 px-2 py-1">
+            <div className="w-7 h-7 rounded-full bg-sidebar-accent flex items-center justify-center flex-shrink-0">
+              <User size={13} className="text-sidebar-accent-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[0.72rem] font-semibold truncate">{user.email}</p>
+              <p className="text-[0.62rem] text-sidebar-foreground/50 capitalize">{user.role.replace('_', ' ')}</p>
+            </div>
+            <button
+              onClick={signOut}
+              className="text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors flex-shrink-0"
+              title="Sair"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
+        )}
+      </SidebarFooter>
+    </Sidebar>
   );
 }

@@ -7,6 +7,7 @@ import {
 import type { Unidade, CategoriaDespesa } from '../types';
 import { SyncAPI } from '../api/sync';
 import { FavoritosAPI } from '../api/favoritos';
+import { useAuth } from '../contexts/AuthContext';
 import { PlanoContasAPI, type PlanoContasItem } from '../api/planoContas';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,6 +74,7 @@ interface GrupoEntry {
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function CategoriasPage({ unidades, accentColor }: Props) {
+  const { user } = useAuth();
   const [results, setResults]               = useState<UnidadeResult[]>([]);
   const [search, setSearch]                 = useState('');
   const [lastSync, setLastSync]             = useState<Date | null>(null);
@@ -113,7 +115,8 @@ export default function CategoriasPage({ unidades, accentColor }: Props) {
     setFavoritos(prev => { const n = new Set(prev); eraFav ? n.delete(categoria) : n.add(categoria); return n; });
     setLoadingFav(prev => { const s = new Set(prev); s.add(categoria); return s; });
     try {
-      const isFav = await FavoritosAPI.toggle(categoria);
+      const empresaId = user?.empresaId ?? '';
+      const isFav = await FavoritosAPI.toggle(categoria, empresaId);
       setFavoritos(prev => { const n = new Set(prev); isFav ? n.add(categoria) : n.delete(categoria); return n; });
     } catch (err: unknown) {
       const e = err as { message?: string };
@@ -158,10 +161,11 @@ export default function CategoriasPage({ unidades, accentColor }: Props) {
   // ── Merge plano de contas de todas as unidades (deduplica por id) ──────────
   const allPlanoItems = useMemo((): PlanoContasItem[] => {
     const items: PlanoContasItem[] = [];
-    const seenIds = new Set<string>();
+    const seen = new Set<string>();
     for (const unitItems of planoContas.values()) {
       for (const item of unitItems) {
-        if (!seenIds.has(item.id)) { seenIds.add(item.id); items.push(item); }
+        const key = `${item.tipo}::${item.grupoNome ?? ''}::${item.subGrupoNome ?? ''}::${norm(item.nome)}`;
+        if (!seen.has(key)) { seen.add(key); items.push(item); }
       }
     }
     return items.sort((a, b) => a.sortOrder - b.sortOrder);
@@ -494,19 +498,27 @@ export default function CategoriasPage({ unidades, accentColor }: Props) {
                                 {/* Colunas por unidade */}
                                 {results.map(r => {
                                   const catItem = r.categorias.find(c => norm(c.nome) === norm(nome));
+                                  const planoItem = planoContas.get(r.unidade.id)?.find(p => p.tipo === 'despesa' && norm(p.nome) === norm(nome));
                                   return (
                                     <TableCell key={r.unidade.id} className="text-center">
                                       {r.loading
                                         ? <span className="text-muted-foreground text-xs">...</span>
-                                        : r.source === 'error'
-                                          ? <span className="text-muted-foreground/40 text-xs">—</span>
-                                          : catItem
+                                        : catItem
+                                          ? (
+                                            <Badge
+                                              className="text-[0.68rem] px-2 py-0.5 font-semibold"
+                                              style={{ background: `${r.unidade.cor}18`, color: r.unidade.cor, border: `1px solid ${r.unidade.cor}40` }}
+                                            >
+                                              ✓ ID {catItem.categoriaID}
+                                            </Badge>
+                                          )
+                                          : planoItem
                                             ? (
                                               <Badge
                                                 className="text-[0.68rem] px-2 py-0.5 font-semibold"
-                                                style={{ background: `${r.unidade.cor}18`, color: r.unidade.cor, border: `1px solid ${r.unidade.cor}40` }}
+                                                style={{ background: `${r.unidade.cor}10`, color: `${r.unidade.cor}bb`, border: `1px solid ${r.unidade.cor}25` }}
                                               >
-                                                ✓ ID {catItem.categoriaID}
+                                                ✓ Plano
                                               </Badge>
                                             )
                                             : <span className="text-border text-xs">—</span>}

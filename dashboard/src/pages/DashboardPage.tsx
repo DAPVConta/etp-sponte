@@ -1,23 +1,37 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList,
-  Line, ComposedChart
+  Line, ComposedChart, ReferenceLine, Label
 } from 'recharts';
 import {
-  FileText, AlertCircle, DollarSign, Calendar, Filter, RefreshCw, TrendingUp, Hash,
-  Wifi, WifiOff, Star, ChevronDown
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove, SortableContext, useSortable, verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
+  FileText, AlertCircle, DollarSign, CalendarDays, Filter, RefreshCw, TrendingUp, Hash,
+  Wifi, WifiOff, Star, ChevronDown, CheckCircle2, GripVertical, TrendingDown
 } from 'lucide-react';
 import type { Unidade, ParcelaPagar } from '../types';
 import { SyncAPI } from '../api/sync';
+import { SyncDiasAPI } from '../api/syncDias';
 import { ContasPagarAPI } from '../api/contasPagar';
 import { FavoritosAPI } from '../api/favoritos';
 import { PlanejamentoAPI } from '../api/planejamento';
+import { PlanoContasAPI } from '../api/planoContas';
 import { cn } from '@/lib/utils';
+import { useDashboardVisibility, type DashboardSectionId } from '@/hooks/use-dashboard-visibility';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from '@/components/ui/chart';
+import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
 // ── XML Parser ──────────────────────────────────────────────────────────────
 const PARCELA_FIELDS = [
@@ -59,7 +73,30 @@ const situationVariant = (sit: string): 'success' | 'error' | 'warning' | 'info'
   return 'info';
 };
 
-const MONTH_NAMES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+const MONTH_NAMES  = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+const MESES_PT_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+function getMesAtualKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function getMesesAno() {
+  const ano = new Date().getFullYear();
+  return Array.from({ length: 12 }, (_, i) => ({
+    value: `${ano}-${String(i + 1).padStart(2, '0')}`,
+    label: `${MESES_PT_FULL[i]} ${ano}`,
+  }));
+}
+// Converte lista de YYYY-MM em startDate/endDate ISO para query no banco
+function mesesParaRange(meses: string[]): { startDate: string; endDate: string } {
+  const sorted = [...meses].sort();
+  const [anoI, mesI] = sorted[0].split('-').map(Number);
+  const [anoF, mesF] = sorted[sorted.length - 1].split('-').map(Number);
+  const start = `${anoI}-${String(mesI).padStart(2,'0')}-01`;
+  const lastDay = new Date(anoF, mesF, 0).getDate();
+  const end   = `${anoF}-${String(mesF).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+  return { startDate: start, endDate: end };
+}
 
 const COLORS = [
   '#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -80,9 +117,35 @@ function getDatesInRange(startISO: string, endISO: string): string[] {
   return result;
 }
 
-interface Props { activeUnidade: Unidade | null; accentColor: string; }
+// ── Drag-and-drop section ordering ──────────────────────────────────────────
+const SECTION_IDS = ['planejamento', 'evolucao', 'heatmap', 'abc', 'ranking', 'desvio_categoria', 'plan_vs_real', 'categorias', 'detalhamento'] as const;
+type SectionId = (typeof SECTION_IDS)[number];
 
-export default function DashboardPage({ activeUnidade, accentColor }: Props) {
+function SortableSection({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.45 : 1, zIndex: isDragging ? 50 : 'auto' }}
+      className="mb-4 group/section relative"
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="absolute -left-1 top-2 z-10 cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-100 transition-opacity duration-200 p-1 rounded-md bg-background/80 border border-border/60 shadow-sm backdrop-blur-sm hover:bg-muted"
+        title="Arrastar para reordenar"
+      >
+        <GripVertical size={14} className="text-muted-foreground" />
+      </button>
+      {children}
+    </div>
+  );
+}
+
+interface Props { activeUnidade: Unidade | null; unidades: Unidade[]; accentColor: string; }
+
+export default function DashboardPage({ activeUnidade, unidades, accentColor }: Props) {
   const [data, setData] = useState<ParcelaPagar[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState('');
@@ -90,28 +153,127 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   const [dataSource, setDataSource] = useState<'api' | 'mock' | null>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    const s = new Date(d.getFullYear(), d.getMonth() - 11, 1);
-    return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-01`;
-  });
-  const [endDate, setEndDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
+  const mesAtual = new Date().getMonth(); // 0-based, usado no gráfico evolução mensal
+
+  const mesesDisponiveis = getMesesAno();
+  const [mesesSelecionados, setMesesSelecionados] = useState<string[]>([getMesAtualKey()]);
+  const [showMesDropdown, setShowMesDropdown]     = useState(false);
+  const mesBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Derivar startDate/endDate dos meses selecionados
+  const { startDate, endDate } = useMemo(
+    () => mesesSelecionados.length > 0 ? mesesParaRange(mesesSelecionados) : mesesParaRange([getMesAtualKey()]),
+    [mesesSelecionados]
+  );
+
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [apenasF, setApenasF] = useState(false);
   const [favoritos, setFavoritos] = useState<Set<string>>(new Set());
   const [selectedSituations, setSelectedSituations] = useState<string[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [catDropdownOpen, setCatDropdownOpen] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
+  const mesDropdownRef = useRef<HTMLDivElement>(null);
+  const [heatTooltip, setHeatTooltip] = useState<{ x: number; y: number; unidade: string; mes: string; real: number; plan: number; desvio: number } | null>(null);
   const [tablePage, setTablePage] = useState(0);
-  const [planejamentoMensal, setPlanejamentoMensal] = useState<Record<string, number>>({});
+  const [abcFilter, setAbcFilter] = useState<'Todas' | 'A' | 'B' | 'C'>('Todas');
+
+  // Fechar todos os dropdowns ao clicar fora da área de filtros
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        filtersRef.current && !filtersRef.current.contains(target) &&
+        (!mesDropdownRef.current || !mesDropdownRef.current.contains(target))
+      ) {
+        setDropdownOpen(false);
+        setCatDropdownOpen(false);
+        setShowMesDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Visibilidade e ordem dos componentes (gerenciada em Configurações → Gráficos, persistido no banco)
+  const { visible: sectionVisibility, isVisible: _isVisible, order: dbOrder, reorder } = useDashboardVisibility();
+  const [sectionOrder, setSectionOrder] = useState<SectionId[]>(dbOrder as SectionId[]);
+
+  // Sync order from context when it loads
+  useEffect(() => {
+    setSectionOrder(dbOrder as SectionId[]);
+  }, [dbOrder]);
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setSectionOrder(prev => {
+        const oldIdx = prev.indexOf(active.id as SectionId);
+        const newIdx = prev.indexOf(over.id as SectionId);
+        const next = arrayMove(prev, oldIdx, newIdx);
+        reorder(next as DashboardSectionId[]);
+        return next;
+      });
+    }
+  }, [reorder]);
+  const [planejamentoRaw, setPlanejamentoRaw] = useState<Record<string, Record<string, number>>>({});
+  const [gruposPlano, setGruposPlano]           = useState<string[]>([]);
+  const [despesasPorGrupo, setDespesasPorGrupo] = useState<Record<string, Set<string>>>({});
+  const [totaisAnuais, setTotaisAnuais]               = useState<Record<string, Record<string, number>>>({});
+  const [totaisAnuaisRaw, setTotaisAnuaisRaw]         = useState<Record<string, Record<string, Record<string, number>>>>({});
+  const [realizadoAnual, setRealizadoAnual]           = useState<Record<string, Record<string, Record<string, number>>>>({});
+  const [loadingAnual, setLoadingAnual]         = useState(false);
   const PAGE_SIZE = 20;
 
   useEffect(() => {
     FavoritosAPI.listar().then(lista => setFavoritos(new Set(lista))).catch(console.error);
   }, []);
+
+  // Carregar totais anuais para a tabela de planejamento e o mapa de calor
+  useEffect(() => {
+    if (!unidades.length) return;
+    setLoadingAnual(true);
+    const ano = new Date().getFullYear();
+    const ids = unidades.map(u => u.id);
+    Promise.all([
+      PlanejamentoAPI.totaisAnuaisPorUnidade(ids, ano),
+      ContasPagarAPI.totaisAnuaisPorUnidade(ids, ano),
+    ])
+      .then(([plano, realizado]) => {
+        setTotaisAnuais(plano.totais);
+        setTotaisAnuaisRaw(plano.porCategoria);
+        setRealizadoAnual(realizado);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingAnual(false));
+  }, [unidades]);
+
+  // Carregar grupos do plano de contas para o filtro de categorias
+  useEffect(() => {
+    const ids = activeUnidade ? [activeUnidade.id] : unidades.map(u => u.id);
+    if (!ids.length) return;
+    Promise.all(ids.map(id => PlanoContasAPI.listarPorUnidade(id).catch(() => [])))
+      .then(results => {
+        const grupos = new Set<string>();
+        const despMap: Record<string, Set<string>> = {};
+        for (const items of results) {
+          for (const item of items) {
+            if (item.tipo === 'grupo') grupos.add(item.nome);
+            if (item.tipo === 'despesa' && item.grupoNome) {
+              if (!despMap[item.grupoNome]) despMap[item.grupoNome] = new Set();
+              despMap[item.grupoNome].add(item.nome);
+            }
+          }
+        }
+        setGruposPlano([...grupos].sort((a, b) => a.localeCompare(b, 'pt-BR')));
+        setDespesasPorGrupo(despMap);
+      })
+      .catch(console.error);
+  }, [activeUnidade, unidades]);
 
   const loadDataFromDB = useCallback(async () => {
     setLoading(true);
@@ -180,6 +342,12 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
           await SyncAPI.syncContasPagar(unitId, pagasNoLote);
           await loadDataFromDB();
         }
+        // Registrar dias sincronizados na tabela de controle
+        const diasParaRegistrar = batch.map((dataPtBR, idx) => {
+          const [dd, mm, yyyy] = dataPtBR.split('/');
+          return { data: `${yyyy}-${mm}-${dd}`, registros: batchResults[idx].length };
+        });
+        await SyncDiasAPI.registrarBatch(unitId, diasParaRegistrar);
       }
       setLastSync(new Date());
       await SyncAPI.logSync(unitId, 'sincronizacao_painel', 'sucesso', pendentes.length);
@@ -197,18 +365,47 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   useEffect(() => { loadDataFromDB(); }, [loadDataFromDB]);
 
   useEffect(() => {
-    const today = new Date();
-    const meses: string[] = [];
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
-      meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-    }
-    const unidadeIds = activeUnidade ? [activeUnidade.id] : [];
-    if (!unidadeIds.length) { setPlanejamentoMensal({}); return; }
-    PlanejamentoAPI.totaisMensais(unidadeIds, meses).then(setPlanejamentoMensal).catch(() => setPlanejamentoMensal({}));
-  }, [activeUnidade]);
+    // Se há unidade ativa usa ela; senão usa todas as unidades disponíveis
+    const unidadeIds = activeUnidade
+      ? [activeUnidade.id]
+      : unidades.map(u => u.id);
+    if (!unidadeIds.length) { setPlanejamentoRaw({}); return; }
+    const ano = new Date().getFullYear();
+    const meses12 = Array.from({ length: 12 }, (_, i) =>
+      `${ano}-${String(i + 1).padStart(2, '0')}`
+    );
+    PlanejamentoAPI.totaisMensaisPorCategoria(unidadeIds, meses12)
+      .then(setPlanejamentoRaw)
+      .catch(() => setPlanejamentoRaw({}));
+  }, [activeUnidade, unidades]);
 
-  useEffect(() => { setTablePage(0); }, [startDate, endDate, selectedCategory, selectedSituations, apenasF]);
+  // Totais planejados por mês respeitando o filtro de categoria ativo.
+  // As chaves em etp_planejamento.categoria seguem o formato:
+  //   "G::{grupoNome}"          → planejamento direto do grupo
+  //   "SG::{grupoNome}::{sub}"  → planejamento de sub-grupo
+  const planejamentoMensal = useMemo(() => {
+    const getGrupoFromKey = (key: string): string => {
+      if (key.startsWith('G::')) return key.slice(3);
+      if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
+      return key; // fallback: chave bruta (formato antigo)
+    };
+    const totais: Record<string, number> = {};
+    for (const [mes, catMap] of Object.entries(planejamentoRaw)) {
+      let total = 0;
+      for (const [cat, valor] of Object.entries(catMap)) {
+        if (selectedCategory === 'Todas') {
+          total += valor;
+        } else {
+          const grupoDoItem = getGrupoFromKey(cat);
+          if (grupoDoItem === selectedCategory) total += valor;
+        }
+      }
+      totais[mes] = total;
+    }
+    return totais;
+  }, [planejamentoRaw, selectedCategory]);
+
+  useEffect(() => { setTablePage(0); }, [mesesSelecionados, selectedCategory, selectedSituations, apenasF]);
 
   const parseDatePtBR = (s: string): Date | null => {
     if (!s) return null;
@@ -218,9 +415,11 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   };
 
   const availableCategories = useMemo(() => {
+    // Usa grupos do plano de contas; fallback para categorias dos dados se ainda não carregou
+    if (gruposPlano.length > 0) return ['Todas', ...gruposPlano];
     const cats = new Set(data.map(d => d.Categoria).filter(Boolean));
     return ['Todas', ...Array.from(cats).sort()];
-  }, [data]);
+  }, [gruposPlano, data]);
 
   const availableSituations = useMemo(() => {
     const sits = new Set(data.map(d => d.SituacaoParcela || 'Sem Status'));
@@ -228,101 +427,191 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
   }, [data]);
 
   const filteredData = useMemo(() => {
-    const start = new Date(startDate);
-    const end = new Date(endDate); end.setHours(23, 59, 59, 999);
-    let result = data.filter(item => {
+    const mesesSet = new Set(mesesSelecionados);
+    const getItemMes = (item: ParcelaPagar): string | null => {
       if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
         const d = parseDatePtBR(item.DataPagamento);
-        return d ? d >= start && d <= end : false;
+        if (d) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       }
-      if (!item.Vencimento) return false;
-      const vencDate = new Date(item.Vencimento);
-      return vencDate >= start && vencDate <= end;
+      if (item.Vencimento) {
+        const d = new Date(item.Vencimento);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+      return null;
+    };
+    let result = data.filter(item => {
+      const mes = getItemMes(item);
+      return mes ? mesesSet.has(mes) : false;
     });
-    if (selectedCategory !== 'Todas') result = result.filter(d => d.Categoria === selectedCategory);
+    if (selectedCategory !== 'Todas') {
+      const despesasDoGrupo = despesasPorGrupo[selectedCategory];
+      if (despesasDoGrupo && despesasDoGrupo.size > 0) {
+        const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+        const normSet = new Set([...despesasDoGrupo].map(norm));
+        result = result.filter(d => normSet.has(norm(d.Categoria || '')));
+      } else {
+        result = result.filter(d => d.Categoria === selectedCategory);
+      }
+    }
     if (apenasF && favoritos.size > 0) result = result.filter(d => favoritos.has(d.Categoria));
     if (selectedSituations.length > 0) result = result.filter(d => selectedSituations.includes(d.SituacaoParcela || 'Sem Status'));
     return result;
-  }, [data, startDate, endDate, selectedCategory, apenasF, favoritos, selectedSituations]);
+  }, [data, mesesSelecionados, selectedCategory, apenasF, favoritos, selectedSituations]);
 
   const categoryDataArray = useMemo(() => {
+    const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const catToGrupo: Record<string, string> = {};
+    for (const [grupo, despesas] of Object.entries(despesasPorGrupo)) {
+      for (const d of despesas) catToGrupo[norm(d)] = grupo;
+    }
     const agg = filteredData.reduce((acc, curr) => {
       const cat = curr.Categoria || 'Outros';
+      const grupo = catToGrupo[norm(cat)] || cat;
       const val = (curr.SituacaoParcela && curr.SituacaoParcela !== 'Pendente' && curr.ValorPago > 0) ? curr.ValorPago : curr.ValorParcela;
-      acc[cat] = (acc[cat] || 0) + val;
+      acc[grupo] = (acc[grupo] || 0) + val;
       return acc;
     }, {} as Record<string, number>);
     return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [filteredData]);
+  }, [filteredData, despesasPorGrupo]);
+
+  const abcDataArray = useMemo(() => {
+    const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    // Reverse map: normalised despesa name → grupo name
+    const catToGrupo: Record<string, string> = {};
+    for (const [grupo, despesas] of Object.entries(despesasPorGrupo)) {
+      for (const d of despesas) catToGrupo[norm(d)] = grupo;
+    }
+    // Aggregate filtered data by grupo
+    const agg: Record<string, number> = {};
+    for (const item of filteredData) {
+      const cat = item.Categoria || '';
+      const val = (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.ValorPago > 0) ? item.ValorPago : item.ValorParcela;
+      const grupo = catToGrupo[norm(cat)] || cat || 'Outros';
+      agg[grupo] = (agg[grupo] || 0) + val;
+    }
+    const sorted = Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+    const total = sorted.reduce((s, d) => s + d.value, 0);
+    if (total === 0) return [];
+    let cumul = 0;
+    return sorted.map(d => {
+      const pct = (d.value / total) * 100;
+      cumul += pct;
+      const classe: 'A' | 'B' | 'C' = cumul <= 80 ? 'A' : cumul <= 95 ? 'B' : 'C';
+      return { name: d.name, value: d.value, pct, cumul, classe };
+    });
+  }, [filteredData, despesasPorGrupo]);
 
   const monthlyDataArray = useMemo(() => {
-    const today = new Date();
-    const twelveMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 11, 1);
-    const endOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+    const ano = new Date().getFullYear();
     const agg: Record<string, number> = {};
     for (const item of data) {
-      if (selectedCategory !== 'Todas' && item.Categoria !== selectedCategory) continue;
+      if (selectedCategory !== 'Todas') {
+        const despesasDoGrupo = despesasPorGrupo[selectedCategory];
+        if (despesasDoGrupo && despesasDoGrupo.size > 0) {
+          const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+          const normSet = new Set([...despesasDoGrupo].map(norm));
+          if (!normSet.has(norm(item.Categoria || ''))) continue;
+        } else {
+          if (item.Categoria !== selectedCategory) continue;
+        }
+      }
       if (selectedSituations.length > 0 && !selectedSituations.includes(item.SituacaoParcela || 'Sem Status')) continue;
-      let refDate: Date | null = null;
-      if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) refDate = parseDatePtBR(item.DataPagamento);
-      else if (item.Vencimento) refDate = new Date(item.Vencimento);
-      if (!refDate || refDate < twelveMonthsAgo || refDate > endOfThisMonth) continue;
-      const key = `${MONTH_NAMES[refDate.getMonth()]}/${refDate.getFullYear()}`;
-      const val = (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.ValorPago > 0) ? item.ValorPago : item.ValorParcela;
-      agg[key] = (agg[key] || 0) + val;
+      // Só considerar itens pagos (com data de pagamento real)
+      if (!item.SituacaoParcela || item.SituacaoParcela === 'Pendente' || !item.DataPagamento) continue;
+      const refDate = parseDatePtBR(item.DataPagamento);
+      if (!refDate || refDate.getFullYear() !== ano) continue;
+      const mesKey = `${ano}-${String(refDate.getMonth() + 1).padStart(2, '0')}`;
+      const val = item.ValorPago > 0 ? item.ValorPago : item.ValorParcela;
+      agg[mesKey] = (agg[mesKey] || 0) + val;
     }
-    return Array.from({ length: 12 }).map((_, i) => {
-      const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
-      const key = `${MONTH_NAMES[d.getMonth()]}/${d.getFullYear()}`;
-      const mesKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      return { name: key, value: agg[key] || 0, planejado: planejamentoMensal[mesKey] || null };
+    const mesAtual = new Date().getMonth(); // 0-based
+    return Array.from({ length: 12 }, (_, i) => {
+      const mesKey = `${ano}-${String(i + 1).padStart(2, '0')}`;
+      const label  = `${MONTH_NAMES[i]}/${ano}`;
+      const plan   = planejamentoMensal[mesKey];
+      const hasPlan = plan != null && plan > 0;
+      return {
+        name:      label,
+        value:     agg[mesKey] || 0,
+        planejado:         hasPlan && i <= mesAtual ? plan : null,
+        planejadoProj:     hasPlan && i >= mesAtual - 1 ? plan : null,
+        planejadoProjLbl:  hasPlan && i > mesAtual ? plan : null,
+      };
     });
   }, [data, selectedCategory, selectedSituations, planejamentoMensal]);
+
+  // Dados empilhados por unidade (usado no gráfico quando "Todas as Unidades" está ativo)
+  const monthlyDataArrayStacked = useMemo(() => {
+    if (activeUnidade || !unidades.length) return null;
+    const ano = new Date().getFullYear();
+    const normStr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    return Array.from({ length: 12 }, (_, i) => {
+      const mesKey = `${ano}-${String(i + 1).padStart(2, '0')}`;
+      const entry: Record<string, string | number | null> = { name: `${MONTH_NAMES[i]}/${ano}` };
+      for (const u of unidades) {
+        if (selectedCategory === 'Todas') {
+          entry[u.id] = Object.values(realizadoAnual[u.id]?.[mesKey] ?? {}).reduce((s, v) => s + v, 0) || 0;
+        } else {
+          const despesasDoGrupo = despesasPorGrupo[selectedCategory];
+          const normSet = despesasDoGrupo && despesasDoGrupo.size > 0
+            ? new Set([...despesasDoGrupo].map(normStr)) : null;
+          entry[u.id] = Object.entries(realizadoAnual[u.id]?.[mesKey] ?? {})
+            .filter(([cat]) => normSet ? normSet.has(normStr(cat)) : cat === selectedCategory)
+            .reduce((s, [, v]) => s + v, 0) || 0;
+        }
+      }
+      const plan = planejamentoMensal[mesKey];
+      const hasPlan = plan != null && plan > 0;
+      const mesAtual = new Date().getMonth();
+      entry.planejado     = hasPlan && i <= mesAtual ? plan : null;
+      entry.planejadoProj = hasPlan && i >= mesAtual ? plan : null;
+      return entry;
+    });
+  }, [activeUnidade, unidades, realizadoAnual, selectedCategory, despesasPorGrupo, planejamentoMensal]);
 
   const pagasNoP = useMemo(() => filteredData.filter(i => i.SituacaoParcela && i.SituacaoParcela !== 'Pendente'), [filteredData]);
   const pendentesNoP = useMemo(() => filteredData.filter(i => !i.SituacaoParcela || i.SituacaoParcela === 'Pendente'), [filteredData]);
   const totalPago = useMemo(() => pagasNoP.reduce((s, i) => s + (i.ValorPago || i.ValorParcela), 0), [pagasNoP]);
   const totalPendente = useMemo(() => pendentesNoP.reduce((s, i) => s + i.ValorParcela, 0), [pendentesNoP]);
-  const uniqueCategories = useMemo(() => new Set(filteredData.map(d => d.Categoria)).size, [filteredData]);
+  const uniqueCategories = useMemo(() => {
+    const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const catToGrupo: Record<string, string> = {};
+    for (const [grupo, despesas] of Object.entries(despesasPorGrupo)) {
+      for (const d of despesas) catToGrupo[norm(d)] = grupo;
+    }
+    return new Set(filteredData.map(d => catToGrupo[norm(d.Categoria || '')] || d.Categoria)).size;
+  }, [filteredData, despesasPorGrupo]);
   const pagedData = useMemo(() => filteredData.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE), [filteredData, tablePage]);
   const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
 
   const tooltipStyle = { backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '8px', color: '#1e293b', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' };
 
   return (
-    <div className="max-w-[1440px] mx-auto px-10 py-8 animate-fade-in">
+    <div className="max-w-[1440px] mx-auto px-6 py-4 animate-fade-in">
       {/* Header */}
-      <header className="flex justify-between items-start mb-8 pb-6 border-b border-border/50 flex-wrap gap-4">
+      <header ref={filtersRef} className="flex justify-between items-center mb-3 pb-3 border-b border-border/50 flex-wrap gap-2">
         <div>
-          <h1 className="text-[1.75rem] font-extrabold tracking-tight flex items-center gap-3 flex-wrap"
-            style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}aa)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-            Dashboard · Contas a Pagar
-            <span className="text-[0.82rem] font-semibold px-3 py-1 rounded-full" style={{ background: `${accentColor}18`, color: accentColor, border: `1px solid ${accentColor}30`, WebkitTextFillColor: accentColor }}>
-              {activeUnidade ? activeUnidade.nome : 'Todas as Unidades'}
-            </span>
-          </h1>
-          <div className="flex items-center gap-4 mt-2 text-sm">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-[1.2rem] font-extrabold tracking-tight flex items-center gap-2 flex-wrap"
+              style={{ backgroundImage: `linear-gradient(135deg, ${accentColor}, ${accentColor}aa)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+              Dashboard · Contas a Pagar
+            </h1>
             {dataSource === 'api' && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
-                <Wifi size={13} /> Dados do Banco Local
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[0.65rem] font-semibold">
+                <Wifi size={11} /> Banco Local
               </span>
             )}
-            {dataSource === 'mock' && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/12 text-amber-400 border border-amber-500/20 text-xs font-semibold">
-                <WifiOff size={13} /> Dados de Demonstração
-              </span>
-            )}
-            {lastSync && <span className="text-muted-foreground text-xs">Sincronizado às {lastSync.toLocaleTimeString('pt-BR')}</span>}
+            {lastSync && <span className="text-muted-foreground text-[0.65rem]">Sync {lastSync.toLocaleTimeString('pt-BR')}</span>}
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap relative z-[15]">
           {/* Situation filter */}
-          <div className="relative flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg text-muted-foreground backdrop-blur focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-            <Filter size={15} />
-            <button className="flex items-center gap-2 text-sm cursor-pointer min-w-[160px] justify-between" onClick={() => setDropdownOpen(o => !o)}>
+          <div className="relative flex items-center gap-1.5 bg-card/75 border border-border px-2.5 py-1.5 rounded-lg text-muted-foreground backdrop-blur transition-all">
+            <Filter size={13} />
+            <button className="flex items-center gap-1.5 text-xs cursor-pointer min-w-[130px] justify-between" onClick={() => setDropdownOpen(o => !o)}>
               <span>{selectedSituations.length === 0 ? 'Todas as Situações' : `${selectedSituations.length} selecionada(s)`}</span>
-              <ChevronDown size={13} />
+              <ChevronDown size={11} />
             </button>
             {dropdownOpen && (
               <div className="absolute top-[calc(100%+6px)] left-0 bg-popover border border-border rounded-xl p-1.5 z-[60] min-w-[220px] max-h-[360px] overflow-y-auto shadow-2xl animate-in fade-in-0 zoom-in-95 duration-150">
@@ -338,10 +627,10 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
           </div>
 
           {/* Category filter */}
-          <div className="relative flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg backdrop-blur transition-all">
-            {apenasF ? <Star size={14} fill="#f59e0b" className="text-amber-400 flex-shrink-0" /> : <Filter size={15} className="text-muted-foreground flex-shrink-0" />}
+          <div className="relative flex items-center gap-1.5 bg-card/75 border border-border px-2.5 py-1.5 rounded-lg backdrop-blur transition-all">
+            {apenasF ? <Star size={12} fill="#f59e0b" className="text-amber-400 flex-shrink-0" /> : <Filter size={13} className="text-muted-foreground flex-shrink-0" />}
             <button
-              className={cn("flex items-center gap-2 text-sm cursor-pointer min-w-[200px] justify-between", apenasF ? "text-amber-400 font-semibold" : "text-muted-foreground")}
+              className={cn("flex items-center gap-1.5 text-xs cursor-pointer min-w-[160px] justify-between", apenasF ? "text-amber-400 font-semibold" : "text-muted-foreground")}
               onClick={() => setCatDropdownOpen(o => !o)}
             >
               <span>{apenasF ? `★ Favoritas (${favoritos.size})` : selectedCategory === 'Todas' ? 'Todas as Categorias' : selectedCategory}</span>
@@ -366,23 +655,63 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
             )}
           </div>
 
-          {/* Date range */}
-          <div className="flex items-center gap-2 bg-card/75 border border-border px-3 py-2 rounded-lg text-muted-foreground backdrop-blur focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-            <Calendar size={15} />
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-transparent text-foreground border-none outline-none text-sm cursor-text color-scheme-light w-[130px]" />
-            <span className="text-muted-foreground text-xs">até</span>
-            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-transparent text-foreground border-none outline-none text-sm cursor-text color-scheme-light w-[130px]" />
+          {/* Month selector */}
+          <div className="relative">
+            <button
+              ref={mesBtnRef}
+              className={cn("flex items-center gap-1.5 bg-card/75 border border-border px-2.5 py-1.5 rounded-lg text-xs transition-all min-w-[150px] justify-between backdrop-blur", showMesDropdown ? "border-primary ring-2 ring-primary/20" : "hover:border-primary/40")}
+              onClick={() => setShowMesDropdown(d => !d)}
+            >
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarDays size={13} style={{ color: accentColor }} />
+                <span className={cn("text-xs", mesesSelecionados.length > 0 && "text-foreground font-medium")}>
+                  {mesesSelecionados.length === 0 ? 'Selecionar mês'
+                    : mesesSelecionados.length === 1 ? (mesesDisponiveis.find(m => m.value === mesesSelecionados[0])?.label || mesesSelecionados[0])
+                    : `${mesesSelecionados.length} meses`}
+                </span>
+              </div>
+              <ChevronDown size={11} className={cn("text-muted-foreground transition-transform", showMesDropdown && "rotate-180")} />
+            </button>
+            {showMesDropdown && createPortal(
+              <>
+                <div className="fixed inset-0 z-[9998]" onClick={() => setShowMesDropdown(false)} />
+                <div
+                  ref={mesDropdownRef}
+                  className="fixed z-[9999] bg-white border border-border rounded-xl p-1.5 shadow-2xl"
+                  style={{
+                    top: (mesBtnRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
+                    left: mesBtnRef.current?.getBoundingClientRect().left ?? 0,
+                    minWidth: Math.max(mesBtnRef.current?.getBoundingClientRect().width ?? 0, 210),
+                  }}
+                >
+                  {mesesDisponiveis.map(m => {
+                    const isSel    = mesesSelecionados.includes(m.value);
+                    const isAtual  = m.value === getMesAtualKey();
+                    return (
+                      <button key={m.value}
+                        className={cn("flex items-center gap-2 w-full px-3 py-1.5 rounded-lg text-xs text-left transition-all", isSel ? "font-semibold" : "text-muted-foreground hover:bg-black/5 hover:text-foreground")}
+                        style={isSel ? { background: `${accentColor}18`, color: accentColor } : {}}
+                        onClick={() => {
+                          setMesesSelecionados(prev =>
+                            prev.includes(m.value) ? (prev.length === 1 ? prev : prev.filter(x => x !== m.value)) : [...prev, m.value].sort()
+                          );
+                        }}
+                      >
+                        {isSel
+                          ? <CheckCircle2 size={11} className="flex-shrink-0" />
+                          : <span className="w-3 h-3 rounded-full border border-border flex-shrink-0" />}
+                        {m.label}
+                        {isAtual && <span className="ml-auto text-[0.6rem] font-bold px-1 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">Atual</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>,
+              document.body
+            )}
           </div>
 
-          <Button
-            onClick={activeUnidade ? syncSponteToDB : () => alert('Para baixar novas contas da Sponte, selecione uma escola específica no menu à esquerda.')}
-            disabled={loading}
-            className="gap-2 font-semibold"
-            style={{ background: accentColor, boxShadow: `0 4px 14px -4px ${accentColor}66` }}
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            Sincronizar
-          </Button>
+
         </div>
       </header>
 
@@ -398,59 +727,1034 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
           <p className="text-muted-foreground">Conectando à API Sponte Educacional...</p>
           {loadingProgress && <p className="text-sm text-muted-foreground/70">{loadingProgress}</p>}
         </div>
-      ) : (
-        <>
-          {/* Stats Grid */}
-          <div className="grid grid-cols-4 gap-4 mb-8 max-[1100px]:grid-cols-2 max-[600px]:grid-cols-1">
-            {[
-              { icon: <FileText size={22} />, color: 'bg-blue-500/15 text-blue-400', label: 'Total no Período', value: `${filteredData.length} registros` },
-              { icon: <DollarSign size={22} />, color: 'bg-emerald-100 text-emerald-700', label: 'Total Pago / Quitado', value: `R$ ${fmtBRL(totalPago)}`, sub: `${pagasNoP.length} parcelas` },
-              { icon: <TrendingUp size={22} />, color: 'bg-amber-100 text-amber-700', label: 'Total Pendente', value: `R$ ${fmtBRL(totalPendente)}`, sub: `${pendentesNoP.length} parcelas` },
-              { icon: <Hash size={22} />, color: 'bg-violet-500/15 text-violet-400', label: 'Categorias', value: `${uniqueCategories}` },
-            ].map((card, idx) => (
-              <Card key={idx} className={cn("flex items-center gap-5 px-6 py-5 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl", `animate-fade-in-up`)} style={{ animationDelay: `${idx * 80}ms` }}>
-                <div className={cn("w-[52px] h-[52px] rounded-xl flex items-center justify-center flex-shrink-0 relative", card.color)}>
-                  <div className="absolute inset-[-2px] rounded-xl opacity-40 blur-[10px]" style={{ background: 'inherit' }} />
-                  {card.icon}
+      ) : (() => {
+        const visibleIds = sectionOrder.filter(id => {
+          // Respeitar configuração de visibilidade
+          if (!sectionVisibility.has(id)) return false;
+          if (id === 'heatmap') return unidades.length > 0;
+          if (id === 'ranking') return unidades.length > 0;
+          if (id === 'desvio_categoria') return unidades.length > 0;
+          if (id === 'plan_vs_real') return unidades.length > 0;
+          if (id === 'abc') return abcDataArray.length > 0;
+          return true;
+        });
+        const renderSection = (sid: SectionId): React.ReactNode => {
+          switch (sid) {
+            case 'planejamento': return (
+          <Card className="overflow-hidden border-0 shadow-md" style={{ borderTop: `3px solid ${accentColor}` }}>
+            <div className="px-5 py-2.5 flex items-center justify-between" style={{ background: accentColor }}>
+              <div className="flex items-center gap-2">
+                <CalendarDays size={14} className="text-white/80" />
+                <span className="text-[0.72rem] font-bold text-white uppercase tracking-widest">Planejamento Anual {new Date().getFullYear()}</span>
+              </div>
+              {loadingAnual && <RefreshCw size={11} className="animate-spin text-white/70" />}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr style={{ background: `${accentColor}15` }}>
+                    <th className="text-left px-4 py-2 font-bold text-[0.6rem] text-slate-500 uppercase tracking-widest whitespace-nowrap min-w-[150px] border-b border-r" style={{ borderColor: `${accentColor}25` }}>
+                      Unidade
+                    </th>
+                    {MESES_PT_FULL.map((m, i) => {
+                      const mesVal  = `${new Date().getFullYear()}-${String(i + 1).padStart(2, '0')}`;
+                      const isAtual = mesVal === getMesAtualKey();
+                      return (
+                        <th key={m} className="text-right px-3 py-2 font-bold text-[0.6rem] uppercase tracking-widest whitespace-nowrap border-b min-w-[80px]"
+                          style={{ borderColor: `${accentColor}25`, background: isAtual ? accentColor : undefined, color: isAtual ? '#fff' : undefined }}>
+                          {m.substring(0, 3)}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {unidades.map((u, idx) => {
+                    const rowTotais = totaisAnuais[u.id] || {};
+                    return (
+                      <tr key={u.id} className="hover:brightness-95 transition-all border-b" style={{ borderColor: `${accentColor}15`, background: idx % 2 === 0 ? '#fff' : `${accentColor}05` }}>
+                        <td className="px-4 py-2 whitespace-nowrap border-r" style={{ borderColor: `${accentColor}20` }}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: u.cor }} />
+                            <span className="font-bold text-[0.68rem]" style={{ color: u.cor }}>{u.nome}</span>
+                          </div>
+                        </td>
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const mesVal  = `${new Date().getFullYear()}-${String(i + 1).padStart(2, '0')}`;
+                          const val     = rowTotais[mesVal] || 0;
+                          const isAtual = mesVal === getMesAtualKey();
+                          return (
+                            <td key={i} className="text-right px-3 py-2 tabular-nums text-[0.68rem]"
+                              style={{ background: isAtual ? `${accentColor}12` : undefined, color: val === 0 ? '#d1d5db' : isAtual ? accentColor : '#334155', fontWeight: val > 0 ? 600 : 400 }}>
+                              {val === 0 ? '—' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(val)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                  {unidades.length > 1 && (
+                    <tr style={{ background: accentColor }}>
+                      <td className="px-4 py-2.5 whitespace-nowrap border-r border-white/20">
+                        <span className="font-extrabold text-[0.65rem] uppercase tracking-widest text-white">Total Geral</span>
+                      </td>
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const mesVal  = `${new Date().getFullYear()}-${String(i + 1).padStart(2, '0')}`;
+                        const total   = unidades.reduce((s, u) => s + (totaisAnuais[u.id]?.[mesVal] || 0), 0);
+                        const isAtual = mesVal === getMesAtualKey();
+                        return (
+                          <td key={i} className="text-right px-3 py-2.5 tabular-nums text-[0.68rem] font-extrabold"
+                            style={{ color: total === 0 ? 'rgba(255,255,255,0.3)' : '#fff', background: isAtual ? 'rgba(0,0,0,0.15)' : undefined }}>
+                            {total === 0 ? '—' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(total)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+            );
+            case 'evolucao': return (
+            <Card className="p-4 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
+                Evolução Mensal · {new Date().getFullYear()}
+                {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+              </h2>
+              {(() => {
+                  const isStacked = !activeUnidade && !!monthlyDataArrayStacked;
+                  const chartData = isStacked ? monthlyDataArrayStacked! : monthlyDataArray;
+                  const fmtCompact = (v: unknown) => Number(v) > 0 ? new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(v)) : '';
+                  // Cor mais clara para a linha de planejado (mix com branco ~40%)
+                  const lighten = (hex: string, pct: number) => {
+                    const c = hex.replace('#', '');
+                    const r = parseInt(c.substring(0, 2), 16);
+                    const g = parseInt(c.substring(2, 4), 16);
+                    const b = parseInt(c.substring(4, 6), 16);
+                    const lr = Math.round(r + (255 - r) * pct);
+                    const lg = Math.round(g + (255 - g) * pct);
+                    const lb = Math.round(b + (255 - b) * pct);
+                    return `#${lr.toString(16).padStart(2,'0')}${lg.toString(16).padStart(2,'0')}${lb.toString(16).padStart(2,'0')}`;
+                  };
+                  const planColor = lighten(accentColor, 0.35);
+                  return (
+                    <>
+                    <div style={{ height: 280 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 40, right: 20, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10, fill: '#64748b' }} />
+                          <YAxis stroke="#94a3b8" tick={{ fontSize: 10, fill: '#64748b' }} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} width={60} />
+                          <Tooltip
+                            formatter={(value, name) => {
+                              if (value == null || value === 0) return [null, null];
+                              if (name === 'planejado') return [`R$ ${fmtBRL(Number(value))}`, 'Planejado'];
+                              if (name === 'planejadoProj') return [`R$ ${fmtBRL(Number(value))}`, 'Projeção'];
+                              if (isStacked) {
+                                const u = unidades.find(u => u.id === name);
+                                return [`R$ ${fmtBRL(Number(value))}`, u?.nome || String(name)];
+                              }
+                              return [`R$ ${fmtBRL(Number(value))}`, 'Realizado'];
+                            }}
+                            cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                            contentStyle={tooltipStyle}
+                          />
+                          {isStacked ? (
+                            unidades.map((u, idx) => (
+                              <Bar key={u.id} dataKey={u.id} stackId="stack" fill={u.cor} maxBarSize={50}
+                                radius={idx === unidades.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}>
+                                {idx === unidades.length - 1 && (
+                                  <LabelList
+                                    valueAccessor={(entry: Record<string, unknown>) => unidades.reduce((s, uu) => s + (Number(entry[uu.id]) || 0), 0)}
+                                    position="top" formatter={fmtCompact}
+                                    style={{ fill: '#475569', fontSize: '11px', fontWeight: 700 }} />
+                                )}
+                              </Bar>
+                            ))
+                          ) : (
+                            <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={50}>
+                              {monthlyDataArray.map((_, i) => <Cell key={i} fill={accentColor} />)}
+                              <LabelList dataKey="value" position="insideTop" formatter={fmtCompact}
+                                fill="#ffffff" fontSize={11} fontWeight={800}
+                                stroke="rgba(0,0,0,0.3)" strokeWidth={0.5} />
+                            </Bar>
+                          )}
+                          <Line dataKey="planejado" type="monotone" stroke={planColor} strokeWidth={2}
+                            dot={{ r: 4, fill: planColor, stroke: '#ffffff', strokeWidth: 2 }}
+                            activeDot={{ r: 6, fill: planColor, stroke: '#fff', strokeWidth: 2 }}
+                            connectNulls={true} name="planejado">
+                            <LabelList dataKey="planejado" position="top"
+                              formatter={(v: unknown) => v != null && Number(v) > 0 ? fmtCompact(v) : ''}
+                              fill={planColor} fontSize={10} fontWeight={700} />
+                          </Line>
+                          <Line dataKey="planejadoProj" type="monotone" stroke={planColor} strokeWidth={2}
+                            strokeDasharray="6 4"
+                            dot={(props: Record<string, unknown>) => {
+                              const idx = props.index as number;
+                              if (idx <= mesAtual) return <g key={`proj-dot-${idx}`} />;
+                              return <circle key={`proj-dot-${idx}`} cx={props.cx as number} cy={props.cy as number} r={3} fill={planColor} stroke="#ffffff" strokeWidth={2} />;
+                            }}
+                            activeDot={{ r: 5, fill: planColor, stroke: '#fff', strokeWidth: 2 }}
+                            connectNulls={true} name="planejadoProj">
+                            <LabelList
+                              content={(rawProps: unknown) => { const props = rawProps as Record<string, unknown>;
+                                const payload = props.value as Record<string, unknown> | undefined;
+                                const lbl = payload?.planejadoProjLbl;
+                                if (lbl == null || Number(lbl) <= 0) return null;
+                                return (
+                                  <text
+                                    key={`proj-lbl-${props.index}`}
+                                    x={props.x as number}
+                                    y={(props.y as number) - 8}
+                                    textAnchor="middle"
+                                    fill={planColor}
+                                    fontSize={10}
+                                    fontWeight={700}
+                                  >
+                                    {fmtCompact(lbl)}
+                                  </text>
+                                );
+                              }}
+                            />
+                          </Line>
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex items-center justify-center gap-5 mt-2 text-[0.7rem] text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block w-3 h-3 rounded-sm" style={{ background: activeUnidade ? accentColor : '#94a3b8' }} />
+                        Valor Pago
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke={planColor} strokeWidth="2" /></svg>
+                        Planejado
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke={planColor} strokeWidth="2" strokeDasharray="4 3" /></svg>
+                        Projeção
+                      </span>
+                    </div>
+                    </>
+                  );
+                })()}
+            </Card>
+            );
+            case 'heatmap': return (
+              <Card className="p-4 animate-fade-in-up" style={{ animationDelay: '325ms' }}>
+                <h2 className="text-sm font-bold mb-0.5">Mapa de calor — desvio planejado vs realizado por mês</h2>
+                <p className="text-[0.7rem] text-muted-foreground mb-3">
+                  Intensidade da cor = magnitude do desvio · <span className="text-red-500 font-medium">vermelho = acima do plano</span> · <span className="text-emerald-600 font-medium">verde = abaixo</span>
+                </p>
+                {(() => {
+                  const ano = new Date().getFullYear();
+                  const meses = Array.from({ length: 12 }, (_, i) => `${ano}-${String(i + 1).padStart(2, '0')}`);
+                  const mesLabel = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+                  const normStr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+                  const getGrupoFromKey = (key: string): string => {
+                    if (key.startsWith('G::')) return key.slice(3);
+                    if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
+                    return key;
+                  };
+                  const getValues = (uid: string, mes: string): { plan: number; real: number; desvio: number | null } => {
+                    let plan: number;
+                    let real: number;
+                    if (selectedCategory === 'Todas') {
+                      plan = totaisAnuais[uid]?.[mes] ?? 0;
+                      real = Object.values(realizadoAnual[uid]?.[mes] ?? {}).reduce((s, v) => s + v, 0);
+                    } else {
+                      plan = Object.entries(totaisAnuaisRaw[uid]?.[mes] ?? {})
+                        .filter(([k]) => getGrupoFromKey(k) === selectedCategory)
+                        .reduce((s, [, v]) => s + v, 0);
+                      const despesasDoGrupo = despesasPorGrupo[selectedCategory];
+                      const normSet = despesasDoGrupo && despesasDoGrupo.size > 0
+                        ? new Set([...despesasDoGrupo].map(normStr))
+                        : null;
+                      real = Object.entries(realizadoAnual[uid]?.[mes] ?? {})
+                        .filter(([cat]) => normSet ? normSet.has(normStr(cat)) : cat === selectedCategory)
+                        .reduce((s, [, v]) => s + v, 0);
+                    }
+                    const desvio = plan > 0 ? (real - plan) / plan * 100 : null;
+                    return { plan, real, desvio };
+                  };
+                  const cellColor = (d: number | null): string => {
+                    if (d === null) return 'transparent';
+                    const abs = Math.abs(d);
+                    if (d > 0) {
+                      if (abs >= 15) return '#ef4444';
+                      if (abs >= 8)  return '#f87171';
+                      if (abs >= 3)  return '#fca5a5';
+                      return '#fecaca';
+                    } else {
+                      if (abs >= 15) return '#059669';
+                      if (abs >= 8)  return '#34d399';
+                      if (abs >= 3)  return '#6ee7b7';
+                      return '#a7f3d0';
+                    }
+                  };
+                  const textColor = (d: number | null): string => {
+                    if (d === null) return '#94a3b8';
+                    const abs = Math.abs(d);
+                    if (abs >= 8) return '#ffffff';
+                    return d > 0 ? '#991b1b' : '#065f46';
+                  };
+                  return (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left text-muted-foreground font-medium py-1.5 pr-3 min-w-[110px]" />
+                            {mesLabel.map((m, i) => (
+                              <th key={i} className="text-center text-muted-foreground font-medium py-1.5 px-1 min-w-[56px]">{m}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(activeUnidade ? unidades.filter(u => u.id === activeUnidade.id) : unidades).map(u => (
+                            <tr key={u.id}>
+                              <td className="pr-3 py-1 font-semibold text-foreground truncate max-w-[110px]" title={u.nome}>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: u.cor }} />
+                                  <span className="truncate">{u.nome}</span>
+                                </div>
+                              </td>
+                              {meses.map((mes, i) => {
+                                const { plan, real, desvio: d } = getValues(u.id, mes);
+                                const bg = cellColor(d);
+                                const tc = textColor(d);
+                                const isNoData = d === null;
+                                return (
+                                  <td key={i} className="py-1 px-0.5 text-center">
+                                    <div
+                                      className="rounded-md mx-auto flex items-center justify-center font-semibold transition-all cursor-default"
+                                      style={{
+                                        width: 52, height: 32,
+                                        background: isNoData ? undefined : bg,
+                                        backgroundImage: isNoData ? 'repeating-linear-gradient(45deg, #e2e8f0 0px, #e2e8f0 1px, transparent 1px, transparent 6px)' : undefined,
+                                        color: tc,
+                                        fontSize: '0.7rem',
+                                      }}
+                                      onMouseEnter={e => {
+                                        if (isNoData) return;
+                                        setHeatTooltip({ x: e.clientX, y: e.clientY, unidade: u.nome, mes: mesLabel[i], real, plan, desvio: d! });
+                                      }}
+                                      onMouseMove={e => {
+                                        if (!isNoData) setHeatTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null);
+                                      }}
+                                      onMouseLeave={() => setHeatTooltip(null)}
+                                    >
+                                      {d != null ? `${d > 0 ? '+' : ''}${d.toFixed(1)}%` : ''}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {/* Legend */}
+                      <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/40">
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <span>Abaixo do plano</span>
+                          {['#059669','#34d399','#6ee7b7','#a7f3d0'].map(c => (
+                            <span key={c} className="inline-block w-5 h-3.5 rounded" style={{ background: c }} />
+                          ))}
+                          <span className="inline-block w-5 h-3.5 rounded bg-slate-200" />
+                          {['#fecaca','#fca5a5','#f87171','#ef4444'].map(c => (
+                            <span key={c} className="inline-block w-5 h-3.5 rounded" style={{ background: c }} />
+                          ))}
+                          <span>Acima do plano</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <div className="w-5 h-3.5 rounded" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #e2e8f0 0px, #e2e8f0 1px, transparent 1px, transparent 6px)', border: '1px solid #e2e8f0' }} />
+                          <span>= sem dados</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </Card>
+            );
+            case 'abc': return (
+              <Card className="p-5 animate-fade-in-up" style={{ animationDelay: '340ms' }}>
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-sm font-bold">Curva ABC — Concentração de gastos por grupo</h2>
+                    <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                      Classificação de Pareto · <span className="text-indigo-500 font-medium">A = ~80% do gasto</span> · <span className="text-amber-500 font-medium">B = ~15%</span> · <span className="text-slate-400 font-medium">C = ~5%</span>
+                    </p>
+                  </div>
+                  <div className="text-xs text-muted-foreground tabular-nums text-right">
+                    {(() => {
+                      const t = abcDataArray.reduce((s, d) => s + d.value, 0);
+                      const fmtK = (v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}k` : v.toFixed(0);
+                      return <>Total: <span className="font-semibold text-foreground">R$ {fmtK(t)}</span> · {abcDataArray.length} grupos</>;
+                    })()}
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[0.7rem] text-muted-foreground font-semibold uppercase tracking-[0.08em] mb-1">{card.label}</p>
-                  <p className="text-[1.5rem] font-bold text-foreground tabular-nums tracking-tight">{card.value}</p>
-                  {card.sub && <p className="text-xs text-muted-foreground">{card.sub}</p>}
+
+                {/* Summary cards */}
+                {(() => {
+                  const grand = abcDataArray.reduce((s, d) => s + d.value, 0);
+                  const fmtK = (v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}k` : v.toFixed(0);
+                  const classes = (['A', 'B', 'C'] as const).map(cl => {
+                    const items = abcDataArray.filter(d => d.classe === cl);
+                    const clTotal = items.reduce((s, d) => s + d.value, 0);
+                    return { cl, count: items.length, total: clTotal, pctItems: abcDataArray.length ? Math.round(items.length / abcDataArray.length * 100) : 0, pctTotal: grand ? Math.round(clTotal / grand * 100) : 0 };
+                  });
+                  const colorCfg = {
+                    A: { accent: '#6366f1', light: '#eef2ff', border: '#c7d2fe', text: 'text-indigo-700' },
+                    B: { accent: '#f59e0b', light: '#fffbeb', border: '#fde68a', text: 'text-amber-700' },
+                    C: { accent: '#94a3b8', light: '#f8fafc', border: '#e2e8f0', text: 'text-slate-600' },
+                  };
+                  return (
+                    <div className="grid grid-cols-3 gap-3 mb-5">
+                      {classes.map(({ cl, total, pctItems, pctTotal }) => (
+                        <div key={cl} className="rounded-xl p-3.5 border relative overflow-hidden" style={{ background: colorCfg[cl].light, borderColor: colorCfg[cl].border }}>
+                          <div className="absolute top-0 left-0 h-1 w-full" style={{ background: colorCfg[cl].accent }} />
+                          <div className="text-[0.7rem] text-muted-foreground font-medium">Classe {cl} · {pctItems}% dos itens</div>
+                          <div className={`text-xl font-bold mt-1 ${colorCfg[cl].text}`}>R$ {fmtK(total)}</div>
+                          <div className="text-[0.7rem] font-semibold mt-0.5" style={{ color: colorCfg[cl].accent }}>{pctTotal}% do gasto total</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Filter pills */}
+                <div className="flex items-center gap-2 mb-5 flex-wrap">
+                  <span className="text-xs text-muted-foreground font-medium">Filtrar por classe:</span>
+                  {(['A', 'B', 'C'] as const).map(cl => {
+                    const active = abcFilter === cl;
+                    const colors = { A: { bg: '#6366f1', idle: '#6366f1' }, B: { bg: '#f59e0b', idle: '#f59e0b' }, C: { bg: '#94a3b8', idle: '#94a3b8' } };
+                    return (
+                      <button key={cl} onClick={() => setAbcFilter(abcFilter === cl ? 'Todas' : cl)}
+                        className="px-3.5 py-1.5 rounded-full text-xs font-semibold border-2 transition-all duration-200"
+                        style={{
+                          borderColor: colors[cl].bg,
+                          background: active ? colors[cl].bg : 'transparent',
+                          color: active ? '#fff' : colors[cl].idle,
+                          boxShadow: active ? `0 2px 8px ${colors[cl].bg}40` : 'none',
+                        }}>
+                        <span className="mr-1.5" style={{ opacity: active ? 1 : 0.7 }}>●</span>Classe {cl}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Pareto chart */}
+                {(() => {
+                  const chartData = abcFilter === 'Todas' ? abcDataArray : abcDataArray.filter(d => d.classe === abcFilter);
+                  const maxPct = Math.max(...chartData.map(d => d.pct), 5);
+                  const clrMap: Record<string, string> = { A: '#6366f1', B: '#f59e0b', C: '#94a3b8' };
+                  const clrMapLight: Record<string, string> = { A: '#818cf8', B: '#fbbf24', C: '#cbd5e1' };
+                  return (
+                    <div style={{ height: Math.max(340, 160 + chartData.length * 22) }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 20, right: 55, left: 5, bottom: 70 }} barCategoryGap="18%">
+                          <defs>
+                            {(['A', 'B', 'C'] as const).map(cl => (
+                              <linearGradient key={cl} id={`abcGrad${cl}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={clrMapLight[cl]} stopOpacity={1} />
+                                <stop offset="100%" stopColor={clrMap[cl]} stopOpacity={1} />
+                              </linearGradient>
+                            ))}
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                          <XAxis
+                            dataKey="name"
+                            tick={{ fill: '#475569', fontSize: 11, fontWeight: 500 }}
+                            angle={-30}
+                            textAnchor="end"
+                            interval={0}
+                            height={75}
+                            tickLine={false}
+                            axisLine={{ stroke: '#e2e8f0' }}
+                            tickFormatter={(v: string) => v.length > 18 ? v.slice(0, 17) + '…' : v}
+                          />
+                          <YAxis
+                            yAxisId="left"
+                            orientation="left"
+                            domain={[0, Math.ceil(maxPct / 5) * 5 + 5]}
+                            tickFormatter={v => `${Math.round(Number(v))}%`}
+                            tick={{ fill: '#64748b', fontSize: 11 }}
+                            tickLine={false}
+                            axisLine={false}
+                            width={45}
+                          />
+                          <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            domain={[0, 100]}
+                            ticks={[0, 20, 40, 60, 80, 100]}
+                            tickFormatter={v => `${Math.round(Number(v))}%`}
+                            tick={{ fill: '#f87171', fontSize: 11 }}
+                            tickLine={false}
+                            axisLine={false}
+                            width={45}
+                          />
+                          <Tooltip
+                            contentStyle={{ ...tooltipStyle, padding: '10px 14px' }}
+                            cursor={{ fill: 'rgba(99,102,241,0.04)' }}
+                            formatter={(value: unknown, name: string) => {
+                              if (name === 'pct') return [`${Number(value).toFixed(1)}%`, '% individual'];
+                              if (name === 'cumul') return [`${Number(value).toFixed(1)}%`, '% acumulado'];
+                              return [`${value}`, name];
+                            }}
+                            labelFormatter={(label: string) => label}
+                          />
+                          <ReferenceLine yAxisId="right" y={80} stroke="#6366f1" strokeDasharray="6 4" strokeWidth={1.5} strokeOpacity={0.6}>
+                            <Label value="80%" position="left" fill="#6366f1" fontSize={10} fontWeight={600} offset={8} />
+                          </ReferenceLine>
+                          <ReferenceLine yAxisId="right" y={95} stroke="#f59e0b" strokeDasharray="6 4" strokeWidth={1.5} strokeOpacity={0.6}>
+                            <Label value="B/C" position="left" fill="#f59e0b" fontSize={10} fontWeight={600} offset={8} />
+                          </ReferenceLine>
+                          <Bar yAxisId="left" dataKey="pct" radius={[5, 5, 0, 0]} maxBarSize={48} animationDuration={800}>
+                            {chartData.map((d, i) => <Cell key={i} fill={`url(#abcGrad${d.classe})`} />)}
+                          </Bar>
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="cumul"
+                            stroke="#ef4444"
+                            strokeWidth={2.5}
+                            dot={{ r: 4, fill: '#fff', stroke: '#ef4444', strokeWidth: 2.5 }}
+                            activeDot={{ r: 6, fill: '#ef4444', stroke: '#fff', strokeWidth: 2 }}
+                            animationDuration={1000}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })()}
+
+                {/* Legend */}
+                <div className="flex items-center justify-center gap-6 mt-2 pt-3 border-t border-border/40">
+                  <div className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                    <span className="inline-block w-3 h-3 rounded" style={{ background: 'linear-gradient(to bottom, #818cf8, #6366f1)' }} />
+                    <span>% individual (barra)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                    <span className="inline-block w-4 h-0.5 rounded-full bg-red-500" />
+                    <span className="inline-block w-2 h-2 rounded-full border-2 border-red-500 bg-white" />
+                    <span>% acumulado (linha)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                    <span className="inline-block w-5 border-t-2 border-dashed border-indigo-400" />
+                    <span>Limiar 80%</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                    <span className="inline-block w-5 border-t-2 border-dashed border-amber-400" />
+                    <span>Limiar B/C</span>
+                  </div>
                 </div>
               </Card>
-            ))}
-          </div>
+            );
+            case 'ranking': return (
+              <Card className="p-5 animate-fade-in-up" style={{ animationDelay: '345ms' }}>
+                <div className="mb-4">
+                  <h2 className="text-sm font-bold flex items-center gap-2">
+                    Ranking — Variação acumulada por unidade × grupo
+                    {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                  </h2>
+                  <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                    Quais combinações de unidade + grupo acumularam mais desvio no período?
+                  </p>
+                </div>
+                {(() => {
+                  const mesesFiltroR = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
+                  const unidadesFiltroR = activeUnidade ? [activeUnidade] : unidades;
+                  const normStr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+                  const getGrupoFromKey = (key: string): string | null => {
+                    if (key.startsWith('G::')) return key.slice(3);
+                    if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
+                    return null; // ignorar chaves sem prefixo de grupo
+                  };
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 gap-6 mb-8">
-            {/* Monthly chart */}
-            <Card className="p-6 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-              <h2 className="text-base font-bold mb-5 flex items-center gap-3">
-                Evolução Mensal · Últimos 12 Meses
-                {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20">{selectedCategory}</Badge>}
-              </h2>
-              <div style={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={monthlyDataArray} margin={{ top: 25, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11, fill: '#64748b' }} />
-                    <YAxis stroke="#94a3b8" tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
-                    <Tooltip formatter={(value, name) => { if (value == null) return [null, null]; return [`R$ ${fmtBRL(Number(value))}`, name === 'planejado' ? 'Planejado' : 'Realizado']; }} cursor={{ fill: 'rgba(0,0,0,0.04)' }} contentStyle={tooltipStyle} />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={55}>
-                      {monthlyDataArray.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                      <LabelList dataKey="value" position="top" formatter={(v: unknown) => Number(v) > 0 ? `R$ ${fmtBRL(Number(v))}` : ''} style={{ fill: '#475569', fontSize: '10px', fontWeight: 500 }} />
-                    </Bar>
-                    <Line dataKey="planejado" type="monotone" stroke={accentColor} strokeWidth={2.5} dot={{ r: 5, fill: accentColor, stroke: '#ffffff', strokeWidth: 2 }} activeDot={{ r: 7, fill: accentColor, stroke: '#fff', strokeWidth: 2 }} connectNulls={false} name="planejado" />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
+                  // Set de nomes de grupo válidos
+                  const gruposValidos = new Set(Object.keys(despesasPorGrupo));
 
-            {/* Category chart */}
-            <Card className="p-6 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '350ms' }}>
-              <h2 className="text-base font-bold mb-5">Gastos por Categoria · Período Selecionado</h2>
-              <div style={{ height: Math.max(400, categoryDataArray.length * 38) }}>
+                  type RankItem = { label: string; unidade: string; grupo: string; cor: string; plan: number; real: number; desvio: number };
+                  const items: RankItem[] = [];
+
+                  for (const u of unidadesFiltroR) {
+                    const planByGrupo: Record<string, number> = {};
+                    for (const mes of mesesFiltroR) {
+                      const catMap = totaisAnuaisRaw[u.id]?.[mes] ?? {};
+                      for (const [cat, val] of Object.entries(catMap)) {
+                        const grupo = getGrupoFromKey(cat);
+                        if (!grupo) continue; // ignorar itens sem grupo
+                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                        planByGrupo[grupo] = (planByGrupo[grupo] || 0) + val;
+                      }
+                    }
+                    const realByGrupo: Record<string, number> = {};
+                    for (const mes of mesesFiltroR) {
+                      const catMap = realizadoAnual[u.id]?.[mes] ?? {};
+                      for (const [cat, val] of Object.entries(catMap)) {
+                        let grupo: string | null = null;
+                        for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                          if ([...despesas].some(d => normStr(d) === normStr(cat))) { grupo = g; break; }
+                        }
+                        if (!grupo) continue; // ignorar despesas sem grupo (sub-itens avulsos)
+                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                        realByGrupo[grupo] = (realByGrupo[grupo] || 0) + val;
+                      }
+                    }
+                    const allGrupos = new Set([...Object.keys(planByGrupo), ...Object.keys(realByGrupo)]);
+                    for (const grupo of allGrupos) {
+                      const plan = planByGrupo[grupo] || 0;
+                      const real = realByGrupo[grupo] || 0;
+                      const desvio = real - plan;
+                      if (plan === 0 && real === 0) continue;
+                      items.push({
+                        label: `${grupo.length > 16 ? grupo.slice(0, 15) + '…' : grupo} · ${u.nome}`,
+                        unidade: u.nome, grupo, cor: u.cor, plan, real, desvio,
+                      });
+                    }
+                  }
+
+                  items.sort((a, b) => Math.abs(b.desvio) - Math.abs(a.desvio));
+                  const top = items.slice(0, 10);
+                  // Escala: o maior valor (plan ou real) define 100%
+                  const maxVal = Math.max(...top.map(d => Math.max(d.plan, d.real)), 1);
+
+                  const fmtK = (v: number) => {
+                    const abs = Math.abs(v);
+                    if (abs >= 1_000_000) return `R$${(abs / 1_000_000).toFixed(1)}M`;
+                    if (abs >= 1_000) return `R$${(abs / 1_000).toFixed(1)}k`;
+                    return `R$${abs.toFixed(0)}`;
+                  };
+                  const fmtDesvio = (v: number) => {
+                    const s = fmtK(v);
+                    return v > 0 ? `+${s}` : v < 0 ? `-${fmtK(Math.abs(v)).slice(2)}` : s;
+                  };
+
+                  if (top.length === 0) {
+                    return <p className="text-sm text-muted-foreground text-center py-8">Sem dados de planejamento × realizado para exibir.</p>;
+                  }
+
+                  return (
+                    <>
+                      {/* Cabeçalho da tabela */}
+                      <div className="flex items-center gap-3 px-2 pb-2 mb-1 border-b border-border/40">
+                        <span className="w-5" />
+                        <span className="w-[180px] min-w-[180px] text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Grupo · Unidade</span>
+                        <span className="flex-1 text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Planejado vs Realizado</span>
+                        <span className="w-[70px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Plan</span>
+                        <span className="w-[70px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Real</span>
+                        <span className="w-[80px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Desvio</span>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        {top.map((item, idx) => {
+                          const isOver = item.desvio > 0;
+                          const planPct = (item.plan / maxVal) * 100;
+                          const realPct = (item.real / maxVal) * 100;
+
+                          return (
+                            <div key={idx} className="flex items-center gap-3 hover:bg-muted/30 rounded-lg px-2 py-2 transition-colors">
+                              {/* Posição */}
+                              <span className="text-[0.7rem] font-bold text-muted-foreground w-5 text-right tabular-nums">{idx + 1}</span>
+
+                              {/* Label */}
+                              <div className="w-[180px] min-w-[180px] flex items-center gap-2 truncate">
+                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: item.cor }} />
+                                <span className="text-xs font-medium text-foreground truncate" title={`${item.grupo} · ${item.unidade}`}>
+                                  {item.label}
+                                </span>
+                              </div>
+
+                              {/* Barra composta */}
+                              <div className="flex-1 h-7 relative">
+                                {isOver ? (
+                                  <>
+                                    {/* Planejado (cinza) */}
+                                    <div
+                                      className="absolute top-0 left-0 h-full rounded-l-md"
+                                      style={{ width: `${Math.max(planPct, 1)}%`, background: '#e2e8f0' }}
+                                    />
+                                    {/* Excedente (vermelho) */}
+                                    <div
+                                      className="absolute top-0 h-full rounded-r-md"
+                                      style={{ left: `${planPct}%`, width: `${Math.max(realPct - planPct, 0.5)}%`, background: '#ef4444' }}
+                                    />
+                                    {/* Marcador do planejado */}
+                                    <div
+                                      className="absolute top-0 h-full"
+                                      style={{ left: `${planPct}%`, width: 2, background: '#94a3b8' }}
+                                    />
+                                  </>
+                                ) : (
+                                  <>
+                                    {/* Realizado (verde) */}
+                                    <div
+                                      className="absolute top-0 left-0 h-full rounded-l-md"
+                                      style={{ width: `${Math.max(realPct, 1)}%`, background: '#059669' }}
+                                    />
+                                    {/* Economia (cinza tracejado até o plano) */}
+                                    <div
+                                      className="absolute top-0 h-full rounded-r-md border border-dashed"
+                                      style={{
+                                        left: `${realPct}%`,
+                                        width: `${Math.max(planPct - realPct, 0)}%`,
+                                        borderColor: '#d1d5db',
+                                        background: 'repeating-linear-gradient(90deg, transparent, transparent 3px, #f1f5f9 3px, #f1f5f9 6px)',
+                                      }}
+                                    />
+                                    {/* Marcador do planejado */}
+                                    <div
+                                      className="absolute top-0 h-full"
+                                      style={{ left: `${planPct}%`, width: 2, background: '#94a3b8' }}
+                                    />
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Valores */}
+                              <span className="text-[0.7rem] font-medium tabular-nums w-[70px] text-right text-muted-foreground">
+                                {fmtK(item.plan)}
+                              </span>
+                              <span className="text-[0.7rem] font-semibold tabular-nums w-[70px] text-right text-foreground">
+                                {fmtK(item.real)}
+                              </span>
+                              <span
+                                className="text-xs font-bold tabular-nums w-[80px] text-right"
+                                style={{ color: isOver ? '#ef4444' : '#059669' }}
+                              >
+                                {fmtDesvio(item.desvio)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Legenda */}
+                      <div className="flex items-center gap-5 mt-4 pt-3 border-t border-border/40">
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <div className="w-5 h-3 rounded bg-slate-200" />
+                          <span>planejado</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <div className="w-5 h-3 rounded bg-red-500" />
+                          <span>excedente (real &gt; plan)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <div className="w-5 h-3 rounded bg-emerald-600" />
+                          <span>economia (real &lt; plan)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
+                          <div className="w-0.5 h-3.5 bg-slate-400" />
+                          <span>meta planejada</span>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </Card>
+            );
+            case 'desvio_categoria': {
+              const normS = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+              const getGrupo = (key: string): string | null => {
+                if (key.startsWith('G::')) return key.slice(3);
+                if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
+                return null;
+              };
+
+              // Respeitar filtros: unidade, meses selecionados, categoria
+              const unidadesFiltradas = activeUnidade ? [activeUnidade] : unidades;
+              const mesesFiltro = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
+
+              const planPorCat: Record<string, number> = {};
+              const realPorCat: Record<string, number> = {};
+
+              for (const u of unidadesFiltradas) {
+                for (const mes of mesesFiltro) {
+                  // Planejado
+                  const catMapPlan = totaisAnuaisRaw[u.id]?.[mes] ?? {};
+                  for (const [cat, val] of Object.entries(catMapPlan)) {
+                    const grupo = getGrupo(cat);
+                    if (!grupo) continue;
+                    if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                    planPorCat[grupo] = (planPorCat[grupo] || 0) + val;
+                  }
+                  // Realizado
+                  const catMapReal = realizadoAnual[u.id]?.[mes] ?? {};
+                  for (const [cat, val] of Object.entries(catMapReal)) {
+                    let grupo: string | null = null;
+                    for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                      if ([...despesas].some(d => normS(d) === normS(cat))) { grupo = g; break; }
+                    }
+                    if (!grupo) continue;
+                    if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                    realPorCat[grupo] = (realPorCat[grupo] || 0) + val;
+                  }
+                }
+              }
+
+              const allCats = new Set([...Object.keys(planPorCat), ...Object.keys(realPorCat)]);
+              const desvioItems = [...allCats]
+                .map(cat => ({
+                  name: cat.length > 22 ? cat.slice(0, 21) + '…' : cat,
+                  fullName: cat,
+                  plan: planPorCat[cat] || 0,
+                  real: realPorCat[cat] || 0,
+                  desvio: (realPorCat[cat] || 0) - (planPorCat[cat] || 0),
+                }))
+                .filter(d => d.plan > 0 || d.real > 0)
+                .sort((a, b) => b.desvio - a.desvio);
+
+              const maxAbs = Math.max(...desvioItems.map(d => Math.abs(d.desvio)), 1);
+              const fmtK2 = (v: number) => {
+                const abs = Math.abs(v);
+                if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+                if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
+                return v.toFixed(0);
+              };
+
+              return (
+              <Card className="overflow-hidden border-0 shadow-md animate-fade-in-up" style={{ borderTop: `3px solid ${accentColor}`, animationDelay: '360ms' }}>
+                <div className="p-4 pb-2">
+                  <h2 className="text-sm font-bold mb-0.5 flex items-center gap-2">
+                    Desvio por Categoria · Período Selecionado
+                    {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                  </h2>
+                  <p className="text-xs text-muted-foreground mb-2">Diferença entre realizado e planejado por grupo de despesa</p>
+                  {(() => {
+                    const totalPlan = desvioItems.reduce((s, d) => s + d.plan, 0);
+                    const totalReal = desvioItems.reduce((s, d) => s + d.real, 0);
+                    const resultado = totalReal - totalPlan;
+                    const pctResultado = totalPlan > 0 ? (resultado / totalPlan) * 100 : 0;
+                    const isOver = resultado > 0;
+                    const corResultado = isOver ? '#dc2626' : '#16a34a';
+                    const fmtR = (v: number) => new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+                    return totalPlan > 0 || totalReal > 0 ? (
+                      <div className="flex flex-wrap gap-4 mb-3 px-1 py-2 rounded-lg" style={{ background: `${accentColor}08` }}>
+                        <div className="flex flex-col">
+                          <span className="text-[0.58rem] font-semibold text-slate-400 uppercase tracking-wider">Planejado</span>
+                          <span className="text-sm font-bold text-slate-500 tabular-nums">R$ {fmtR(totalPlan)}</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[0.58rem] font-semibold text-slate-400 uppercase tracking-wider">Realizado</span>
+                          <span className="text-sm font-bold text-slate-700 tabular-nums">R$ {fmtR(totalReal)}</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[0.58rem] font-semibold text-slate-400 uppercase tracking-wider">Resultado</span>
+                          <span className="text-sm font-bold tabular-nums" style={{ color: corResultado }}>
+                            {isOver ? '+' : ''}R$ {fmtR(resultado)}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[0.58rem] font-semibold text-slate-400 uppercase tracking-wider">% Resultado</span>
+                          <span className="text-sm font-bold tabular-nums" style={{ color: corResultado }}>
+                            {isOver ? '+' : ''}{pctResultado.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+                  {desvioItems.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">Sem dados de planejamento × realizado para exibir.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {/* Header */}
+                      <div className="flex items-center text-[0.6rem] font-bold text-slate-400 uppercase tracking-widest px-1 mb-1">
+                        <div className="w-[160px] flex-shrink-0">Categoria</div>
+                        <div className="flex-1" />
+                        <div className="w-[80px] text-right">Planejado</div>
+                        <div className="w-[80px] text-right">Realizado</div>
+                        <div className="w-[80px] text-right">Desvio</div>
+                      </div>
+                      {desvioItems.map((item, idx) => {
+                        const pct = (item.desvio / maxAbs) * 100;
+                        const isOver = item.desvio > 0;
+                        const barColor = isOver ? '#ef4444' : '#22c55e';
+                        const barBg = isOver ? '#fef2f2' : '#f0fdf4';
+                        return (
+                          <div key={idx} className="flex items-center gap-1 px-1 py-1 rounded hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <div className="w-[160px] flex-shrink-0 text-[0.7rem] font-semibold text-slate-700 truncate" title={item.fullName}>
+                              {item.name}
+                            </div>
+                            {/* Barra de desvio */}
+                            <div className="flex-1 flex items-center h-6 relative">
+                              <div className="absolute inset-0 rounded" style={{ background: barBg }} />
+                              {/* Centro (zero) */}
+                              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-300" />
+                              {/* Barra */}
+                              {isOver ? (
+                                <div className="absolute h-4 rounded-r top-1"
+                                  style={{ left: '50%', width: `${Math.min(Math.abs(pct) / 2, 50)}%`, background: barColor, opacity: 0.75 }} />
+                              ) : (
+                                <div className="absolute h-4 rounded-l top-1"
+                                  style={{ right: '50%', width: `${Math.min(Math.abs(pct) / 2, 50)}%`, background: barColor, opacity: 0.75 }} />
+                              )}
+                              {/* Label no centro da barra */}
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-[0.58rem] font-bold" style={{ color: barColor }}>
+                                  {isOver ? '+' : ''}{fmtK2(item.desvio)}
+                                </span>
+                              </div>
+                            </div>
+                            {/* Valores */}
+                            <div className="w-[80px] text-right text-[0.65rem] tabular-nums text-slate-400 font-medium">
+                              {fmtK2(item.plan)}
+                            </div>
+                            <div className="w-[80px] text-right text-[0.65rem] tabular-nums text-slate-600 font-semibold">
+                              {fmtK2(item.real)}
+                            </div>
+                            <div className="w-[80px] text-right text-[0.68rem] tabular-nums font-bold" style={{ color: barColor }}>
+                              {isOver ? '+' : ''}{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(item.desvio)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </Card>
+              );
+            }
+            case 'plan_vs_real': {
+              const normPvr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+              const getGrupoPvr = (key: string): string | null => {
+                if (key.startsWith('G::')) return key.slice(3);
+                if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
+                return null;
+              };
+
+              const unidadesFiltPvr = activeUnidade ? [activeUnidade] : unidades;
+              const mesesFiltroPvr = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
+
+              // Agregar por categoria
+              const pvrPlan: Record<string, number> = {};
+              const pvrReal: Record<string, number> = {};
+
+              for (const u of unidadesFiltPvr) {
+                for (const mes of mesesFiltroPvr) {
+                  const catMapP = totaisAnuaisRaw[u.id]?.[mes] ?? {};
+                  for (const [cat, val] of Object.entries(catMapP)) {
+                    const grupo = getGrupoPvr(cat);
+                    if (!grupo) continue;
+                    pvrPlan[grupo] = (pvrPlan[grupo] || 0) + val;
+                  }
+                  const catMapR = realizadoAnual[u.id]?.[mes] ?? {};
+                  for (const [cat, val] of Object.entries(catMapR)) {
+                    let grupo: string | null = null;
+                    for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                      if ([...despesas].some(d => normPvr(d) === normPvr(cat))) { grupo = g; break; }
+                    }
+                    if (!grupo) continue;
+                    pvrReal[grupo] = (pvrReal[grupo] || 0) + val;
+                  }
+                }
+              }
+
+              const allCatsPvr = [...new Set([...Object.keys(pvrPlan), ...Object.keys(pvrReal)])];
+              const pvrData = allCatsPvr
+                .map(cat => ({
+                  categoria: cat.length > 18 ? cat.slice(0, 17) + '…' : cat,
+                  planejado: pvrPlan[cat] || 0,
+                  realizado: pvrReal[cat] || 0,
+                }))
+                .filter(d => d.planejado > 0 || d.realizado > 0)
+                .sort((a, b) => Math.max(b.planejado, b.realizado) - Math.max(a.planejado, a.realizado));
+
+              const totalPvr = pvrData.reduce((s, d) => s + d.planejado, 0);
+              const totalRvr = pvrData.reduce((s, d) => s + d.realizado, 0);
+              const resultadoPvr = totalRvr - totalPvr;
+              const pctPvr = totalPvr > 0 ? (resultadoPvr / totalPvr) * 100 : 0;
+              const isOverPvr = resultadoPvr > 0;
+
+              const pvrChartConfig: ChartConfig = {
+                planejado: { label: 'Planejado', color: 'hsl(215 70% 75%)' },
+                realizado: { label: 'Realizado', color: 'hsl(215 80% 55%)' },
+              };
+
+              const fmtCompactPvr = (v: number) => {
+                if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+                if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
+                return v.toFixed(0);
+              };
+
+              return (
+              <Card className="overflow-hidden border-0 shadow-md animate-fade-in-up" style={{ borderTop: `3px solid ${accentColor}`, animationDelay: '365ms' }}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    Planejado vs Realizado por Categoria
+                    {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Comparativo de valores planejados e realizados por grupo de despesa · Período Selecionado
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {pvrData.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">Sem dados para exibir no período selecionado.</p>
+                  ) : (
+                    <ChartContainer config={pvrChartConfig} className="h-[200px] w-full">
+                      <BarChart accessibilityLayer data={pvrData}>
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="categoria"
+                          tickLine={false}
+                          tickMargin={10}
+                          axisLine={false}
+                          tick={{ fontSize: 11 }}
+                          interval={0}
+                          tickFormatter={(value) => value.length > 12 ? value.slice(0, 11) + '…' : value}
+                        />
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              hideLabel
+                              formatter={(value, name) => {
+                                const label = name === 'planejado' ? 'Planejado' : 'Realizado';
+                                return [`R$ ${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(Number(value))}`, label];
+                              }}
+                            />
+                          }
+                        />
+                        <ChartLegend content={<ChartLegendContent />} />
+                        <Bar
+                          dataKey="planejado"
+                          stackId="a"
+                          fill="var(--color-planejado)"
+                          radius={[0, 0, 4, 4]}
+                          maxBarSize={48}
+                        >
+                          <LabelList dataKey="planejado" position="center" formatter={(v: number) => v > 0 ? fmtCompactPvr(v) : ''} style={{ fill: '#fff', fontSize: '10px', fontWeight: 600 }} />
+                        </Bar>
+                        <Bar
+                          dataKey="realizado"
+                          stackId="a"
+                          fill="var(--color-realizado)"
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={48}
+                        >
+                          <LabelList dataKey="realizado" position="center" formatter={(v: number) => v > 0 ? fmtCompactPvr(v) : ''} style={{ fill: '#fff', fontSize: '10px', fontWeight: 600 }} />
+                        </Bar>
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
+                {(totalPvr > 0 || totalRvr > 0) && (
+                  <CardFooter className="flex-col items-start gap-2 text-sm border-t pt-4">
+                    <div className="flex gap-2 leading-none font-medium" style={{ color: isOverPvr ? '#dc2626' : '#16a34a' }}>
+                      {isOverPvr ? 'Acima do planejado em' : 'Abaixo do planejado em'} {Math.abs(pctPvr).toFixed(1)}%
+                      {isOverPvr ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                    </div>
+                    <div className="leading-none text-muted-foreground text-xs">
+                      Planejado: R$ {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(totalPvr)} · Realizado: R$ {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(totalRvr)}
+                    </div>
+                  </CardFooter>
+                )}
+              </Card>
+              );
+            }
+            case 'categorias': return (
+            <Card className="p-4 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '350ms' }}>
+              <h2 className="text-sm font-bold mb-3">Gastos por Categoria · Período Selecionado</h2>
+              <div style={{ height: Math.max(300, categoryDataArray.length * 32) }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryDataArray} layout="vertical" margin={{ top: 10, right: 140, left: 220, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
@@ -465,13 +1769,12 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
                 </ResponsiveContainer>
               </div>
             </Card>
-          </div>
-
-          {/* Table */}
+            );
+            case 'detalhamento': return (
           <Card className="overflow-hidden animate-fade-in-up" style={{ animationDelay: '400ms' }}>
-            <div className="flex justify-between items-center px-6 py-4 border-b border-border/50">
-              <h2 className="text-base font-bold">Detalhamento · Período Selecionado</h2>
-              <Badge variant="secondary" className="text-primary bg-primary/10 border-primary/15">{filteredData.length} registros</Badge>
+            <div className="flex justify-between items-center px-4 py-2.5 border-b border-border/50">
+              <h2 className="text-sm font-bold">Detalhamento · Período Selecionado</h2>
+              <Badge variant="secondary" className="text-primary bg-primary/10 border-primary/15 text-xs">{filteredData.length} registros</Badge>
             </div>
             <Table>
               <TableHeader>
@@ -492,7 +1795,14 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
                   return (
                     <TableRow key={`${item.ContaPagarID}-${idx}`} className={isPaga ? 'bg-emerald-500/[0.04]' : ''}>
                       <TableCell className="font-medium max-w-[200px] truncate">{item.Sacado}</TableCell>
-                      <TableCell><Badge variant="category">{item.Categoria}</Badge></TableCell>
+                      <TableCell><Badge variant="category">{(() => {
+                        const norm = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+                        const cat = item.Categoria || '';
+                        for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                          if ([...despesas].some(d => norm(d) === norm(cat))) return g;
+                        }
+                        return cat;
+                      })()}</Badge></TableCell>
                       <TableCell>{item.NumeroParcela}</TableCell>
                       <TableCell>{item.Vencimento ? new Date(item.Vencimento).toLocaleDateString('pt-BR') : '—'}</TableCell>
                       <TableCell className={isPaga ? 'text-emerald-700 text-sm font-medium' : 'text-muted-foreground text-sm'}>{item.DataPagamento || '—'}</TableCell>
@@ -516,7 +1826,48 @@ export default function DashboardPage({ activeUnidade, accentColor }: Props) {
               </div>
             )}
           </Card>
-        </>
+            );
+            default: return null;
+          }
+        };
+        return (
+          <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
+              {visibleIds.map(id => (
+                <SortableSection key={id} id={id}>
+                  {renderSection(id)}
+                </SortableSection>
+              ))}
+            </SortableContext>
+          </DndContext>
+        );
+      })()}
+
+      {/* Heat map tooltip */}
+      {heatTooltip && createPortal(
+        <div
+          className="fixed z-[9999] pointer-events-none"
+          style={{ left: heatTooltip.x + 14, top: heatTooltip.y - 10 }}
+        >
+          <div className="bg-popover border border-border rounded-xl shadow-2xl px-3.5 py-2.5 text-xs min-w-[170px]">
+            <div className="font-bold text-foreground mb-1.5">{heatTooltip.unidade} · {heatTooltip.mes}</div>
+            <div className="flex justify-between gap-4 mb-0.5">
+              <span className="text-muted-foreground">Realizado</span>
+              <span className="font-semibold text-foreground">R$ {fmtBRL(heatTooltip.real)}</span>
+            </div>
+            <div className="flex justify-between gap-4 mb-1.5">
+              <span className="text-muted-foreground">Planejado</span>
+              <span className="font-semibold text-foreground">R$ {fmtBRL(heatTooltip.plan)}</span>
+            </div>
+            <div className="border-t border-border/50 pt-1.5 flex justify-between gap-4">
+              <span className="text-muted-foreground">Desvio</span>
+              <span className={`font-bold ${heatTooltip.desvio > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {heatTooltip.desvio > 0 ? '+' : ''}{heatTooltip.desvio.toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -26,6 +26,20 @@
     --input: 214 20% 88%;
     --ring: 239 84% 67%;
     --radius: 0.5rem;
+    --chart-1: 239 84% 67%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    /* sidebar always dark */
+    --sidebar-background: 222 47% 6%;
+    --sidebar-foreground: 213 31% 95%;
+    --sidebar-primary: 239 84% 67%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 213 31% 95%;
+    --sidebar-border: 216 34% 17%;
+    --sidebar-ring: 239 84% 67%;
   }
 
   /* ── Tema escuro — aplicado na sidebar via class="dark" ── */
@@ -50,6 +64,14 @@
     --input: 216 34% 17%;
     --ring: 239 84% 67%;
     --radius: 0.5rem;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
   * {
@@ -81,4 +103,10 @@
 @layer utilities {
   .color-scheme-dark  { color-scheme: dark; }
   .color-scheme-light { color-scheme: light; }
+}
+
+/* ── Sidebar inset layout — main content arredondado ── */
+[data-sidebar="sidebar"] {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--sidebar-border)) transparent;
 }

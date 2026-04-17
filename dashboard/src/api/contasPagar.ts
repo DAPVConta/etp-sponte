@@ -58,5 +58,54 @@ export const ContasPagarAPI = {
       ContaID: '',
       RetornoOperacao: ''
     }));
+  },
+
+  // Totais realizados por unidade, mês e categoria (para o mapa de calor com filtro)
+  async totaisAnuaisPorUnidade(
+    unidadeIds: string[],
+    ano: number
+  ): Promise<Record<string, Record<string, Record<string, number>>>> {
+    if (!unidadeIds.length) return {};
+
+    const startDate = `${ano}-01-01`;
+    const endDate   = `${ano}-12-31`;
+
+    let allData: { unidade_id: string; valor_pago: number; valor_parcela: number; situacao_parcela: string; vencimento: string; data_pagamento: string | null; categoria: string }[] = [];
+    let page = 0;
+    const PAGE_SIZE = 1000;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('etp_contas_pagar')
+        .select('unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
+        .in('unidade_id', unidadeIds)
+        .or(`vencimento.gte.${startDate},data_pagamento.gte.${startDate}`)
+        .or(`vencimento.lte.${endDate},data_pagamento.lte.${endDate}`)
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allData = allData.concat(data);
+      if (data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    // { uid: { mes: { categoria: total } } }
+    const result: Record<string, Record<string, Record<string, number>>> = {};
+    for (const uid of unidadeIds) result[uid] = {};
+
+    for (const row of allData) {
+      const uid = row.unidade_id;
+      // Só considerar itens pagos (com data de pagamento real)
+      if (!row.situacao_parcela || row.situacao_parcela === 'Pendente' || !row.data_pagamento) continue;
+      const mes = row.data_pagamento.substring(0, 7);
+      if (!mes.startsWith(String(ano))) continue;
+      const valor = Number(row.valor_pago) > 0 ? Number(row.valor_pago) : Number(row.valor_parcela);
+      const cat = row.categoria || '';
+      if (!result[uid]) result[uid] = {};
+      if (!result[uid][mes]) result[uid][mes] = {};
+      result[uid][mes][cat] = (result[uid][mes][cat] || 0) + valor;
+    }
+
+    return result;
   }
 };
