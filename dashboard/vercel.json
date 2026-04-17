@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/api-sponte/:path*", "destination": "https://api.sponteeducacional.net.br/:path*" }
+  ]
+}
