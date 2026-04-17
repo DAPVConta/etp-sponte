@@ -1,0 +1,8 @@
+{
+  "buildCommand": "cd dashboard && npm install && npm run build",
+  "outputDirectory": "dashboard/dist",
+  "installCommand": "echo skip",
+  "rewrites": [
+    { "source": "/api-sponte/:path*", "destination": "https://api.sponteeducacional.net.br/:path*" }
+  ]
+}
