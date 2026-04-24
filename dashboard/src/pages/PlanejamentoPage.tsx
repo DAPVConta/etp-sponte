@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarDays, TrendingUp, Save, RefreshCw, CheckCircle2, AlertCircle,
   ChevronDown, ChevronUp, Target, BarChart3, Plus, Minus, Check, Star, Search,
-  FolderOpen, FolderClosed, Tag, Clock, BarChart2,
+  FolderOpen, FolderClosed, Tag, Clock, BarChart2, AlertTriangle, X,
 } from 'lucide-react';
 import type { Unidade } from '../types';
 import { PlanejamentoAPI, type ItemPlanejamento } from '../api/planejamento';
@@ -53,7 +54,16 @@ interface ValorEntry { valor: number; obs: string; }
 
 interface Props { unidades: Unidade[]; activeUnidade: Unidade | null; accentColor: string; }
 
+// Serializa `valores` de forma estavel para comparar dirty-state
+function snapshotValores(map: Map<string, ValorEntry>): string {
+  const entries = [...map.entries()]
+    .map(([k, v]) => [k, Math.round(v.valor * 100), (v.obs || '').trim()] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return JSON.stringify(entries);
+}
+
 export default function PlanejamentoPage({ unidades, activeUnidade, accentColor }: Props) {
+  const navigate = useNavigate();
   const [mesesSelecionados, setMesesSelecionados] = useState<string[]>([getMesAtual()]);
   const [showMesDropdown, setShowMesDropdown]     = useState(false);
   const mesesDisponiveis = getMesesAno();
@@ -81,6 +91,12 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
 
   const inputRefs   = useRef<Map<string, HTMLInputElement>>(new Map());
   const mesBtnRef   = useRef<HTMLButtonElement>(null);
+
+  // ── Unsaved-changes guard ────────────────────────────────────────────────
+  const [savedSnapshot, setSavedSnapshot] = useState<string>('');
+  const [pendingNav, setPendingNav]       = useState<string | null>(null);
+  const currentSnapshot = useMemo(() => snapshotValores(valores), [valores]);
+  const isDirty = savedSnapshot !== '' && currentSnapshot !== savedSnapshot;
 
   // selectedIds derivado de activeUnidade — unidade ativa ou todas
   const selectedIds = useMemo(
@@ -234,6 +250,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
 
       setTreeData(tree);
       setValores(novosValores);
+      setSavedSnapshot(snapshotValores(novosValores));
       setCollapsedGrupos(allGrupoKeys);
       setCollapsedSubgrupos(allSubgrupoKeys);
       setTabelaVisivel(true);
@@ -275,6 +292,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
         )
       );
       setSaveStatus('ok');
+      setSavedSnapshot(snapshotValores(valores));
       setTimeout(() => setSaveStatus('idle'), 3000);
       // Atualizar tabela anual
       PlanejamentoAPI.totaisAnuaisPorUnidade(unidades.map(u => u.id), new Date().getFullYear())
@@ -284,6 +302,52 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
       setErroMsg(e?.message || 'Erro ao salvar'); setSaveStatus('error');
     } finally { setSaving(false); }
   }, [selectedIds, mesesSelecionados, valores]);
+
+  // ── Guard: bloqueia navegação quando ha alteracoes nao salvas ────────────
+  useEffect(() => {
+    if (!isDirty) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = (e.target as HTMLElement | null)?.closest('a');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:')) return;
+      if (anchor.getAttribute('target') === '_blank') return;
+      if (href === window.location.pathname) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingNav(href);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('click', handleClick, true);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('click', handleClick, true);
+    };
+  }, [isDirty]);
+
+  const confirmSalvarEProsseguir = useCallback(async () => {
+    const target = pendingNav;
+    await salvar();
+    // Apos salvar, redefine snapshot (salvar ja faz) e navega
+    setPendingNav(null);
+    if (target) navigate(target);
+  }, [pendingNav, salvar, navigate]);
+
+  const confirmDescartarEProsseguir = useCallback(() => {
+    const target = pendingNav;
+    setSavedSnapshot(currentSnapshot); // limpa dirty sem salvar
+    setPendingNav(null);
+    if (target) navigate(target);
+  }, [pendingNav, currentSnapshot, navigate]);
 
   // ── Árvore filtrada ───────────────────────────────────────────────────────
   const filteredTree = useMemo(() => {
@@ -811,7 +875,74 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
           </p>
         </div>
       )}
+
+      {/* Modal de alteracoes nao salvas */}
+      {pendingNav && (
+        <UnsavedChangesModal
+          accentColor={accentColor}
+          saving={saving}
+          onSalvar={confirmSalvarEProsseguir}
+          onDescartar={confirmDescartarEProsseguir}
+          onCancelar={() => setPendingNav(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Modal de alteracoes nao salvas ───────────────────────────────────────────
+function UnsavedChangesModal({ accentColor, saving, onSalvar, onDescartar, onCancelar }: {
+  accentColor: string;
+  saving: boolean;
+  onSalvar: () => void;
+  onDescartar: () => void;
+  onCancelar: () => void;
+}) {
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+        <div className="flex items-start gap-4 px-6 pt-6 pb-4">
+          <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
+            <AlertTriangle size={22} className="text-amber-600" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-bold text-slate-800">Alterações não salvas</h3>
+            <p className="text-sm text-slate-600 mt-1 leading-relaxed">
+              Você digitou valores novos no planejamento que ainda não foram salvos.
+              Deseja <strong>salvar</strong> antes de sair ou <strong>cancelar</strong> as alterações?
+            </p>
+          </div>
+          <button
+            onClick={onCancelar}
+            disabled={saving}
+            className="text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0 disabled:opacity-40"
+            aria-label="Fechar"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-4 bg-slate-50 border-t border-slate-100">
+          <Button
+            variant="outline"
+            onClick={onDescartar}
+            disabled={saving}
+            className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+          >
+            Cancelar alterações
+          </Button>
+          <Button
+            onClick={onSalvar}
+            disabled={saving}
+            className="gap-2"
+            style={{ background: accentColor }}
+          >
+            {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+            {saving ? 'Salvando...' : 'Salvar planejamento'}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
