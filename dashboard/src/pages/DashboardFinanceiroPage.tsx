@@ -157,12 +157,12 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
   // Mes de referencia (ultimo fechado). Default = mes anterior.
   const [mesRef, setMesRef] = useState<string>(getMesRefDefault);
   const [showMesDropdown, setShowMesDropdown] = useState(false);
-  const mesBtnRef = useRef<HTMLButtonElement>(null);
+  const mesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!showMesDropdown) return;
     const close = (e: MouseEvent) => {
-      if (mesBtnRef.current && !mesBtnRef.current.contains(e.target as Node)) {
+      if (mesContainerRef.current && !mesContainerRef.current.contains(e.target as Node)) {
         setShowMesDropdown(false);
       }
     };
@@ -610,9 +610,8 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
 
         <div className="flex items-center gap-2 flex-wrap relative z-[15]">
           {/* Mês de referência */}
-          <div className="relative">
+          <div className="relative" ref={mesContainerRef}>
             <button
-              ref={mesBtnRef}
               className={cn(
                 'flex items-center gap-1.5 bg-card/75 border border-border px-2.5 py-1.5 rounded-lg text-xs transition-all min-w-[180px] justify-between backdrop-blur',
                 showMesDropdown ? 'border-primary ring-2 ring-primary/20' : 'hover:border-primary/40'
