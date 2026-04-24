@@ -1,6 +1,26 @@
 import { supabase } from '../lib/supabase';
 import type { ParcelaPagar } from '../types';
 
+export interface LancamentoCP {
+  contaPagarId: string;
+  numeroParcela: string;
+  unidadeId: string;
+  sacado: string;
+  categoria: string;
+  vencimento: string | null;
+  dataPagamento: string | null;
+  valorParcela: number;
+  valorPago: number;
+  situacaoParcela: string;
+}
+
+export interface LancamentoFiltros {
+  unidadeIds?: string[];
+  mes?: string | null;       // formato 'YYYY-MM' filtra por data_pagamento
+  situacao?: string | null;
+  categoria?: string | null;
+}
+
 export const ContasPagarAPI = {
   // Busca contas do banco de dados (Supabase) para o Dashboard
   async listar(unidadeId: string | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
@@ -57,6 +77,55 @@ export const ContasPagarAPI = {
       TipoRecebimento: row.tipo_recebimento || '',
       ContaID: '',
       RetornoOperacao: ''
+    }));
+  },
+
+  // Lista de lançamentos para a tela Lançamento CP
+  async listarLancamentos(filtros: LancamentoFiltros = {}): Promise<LancamentoCP[]> {
+    const { unidadeIds, mes, situacao, categoria } = filtros;
+
+    let allData: any[] = [];
+    let page = 0;
+    const PAGE_SIZE = 1000;
+
+    while (true) {
+      let query = supabase
+        .from('etp_contas_pagar')
+        .select('conta_pagar_id, numero_parcela, unidade_id, sacado, categoria, vencimento, data_pagamento, valor_parcela, valor_pago, situacao_parcela')
+        .order('data_pagamento', { ascending: false, nullsFirst: false })
+        .order('vencimento', { ascending: false })
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+      if (unidadeIds && unidadeIds.length > 0) query = query.in('unidade_id', unidadeIds);
+      if (situacao)                              query = query.eq('situacao_parcela', situacao);
+      if (categoria)                             query = query.eq('categoria', categoria);
+      if (mes) {
+        const start = `${mes}-01`;
+        const [ano, m] = mes.split('-').map(Number);
+        const nextMonth = new Date(ano, m, 1);
+        const end = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+        query = query.gte('data_pagamento', start).lt('data_pagamento', end);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      allData = allData.concat(data);
+      if (data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return allData.map(row => ({
+      contaPagarId:    String(row.conta_pagar_id),
+      numeroParcela:   row.numero_parcela,
+      unidadeId:       row.unidade_id,
+      sacado:          row.sacado || '',
+      categoria:       row.categoria || '',
+      vencimento:      row.vencimento || null,
+      dataPagamento:   row.data_pagamento || null,
+      valorParcela:    Number(row.valor_parcela) || 0,
+      valorPago:       Number(row.valor_pago) || 0,
+      situacaoParcela: row.situacao_parcela || '',
     }));
   },
 

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Tag,
   Target,
+  Receipt,
   Settings,
   Palette,
   BarChart3,
@@ -132,6 +133,7 @@ export default function AppSidebar({
             <SidebarMenu>
               <NavItem to="/" end label="Dashboard" icon={LayoutDashboard} />
               <NavItem to="/planejamento" label="Planejamento" icon={Target} />
+              <NavItem to="/lancamento-cp" label="Lançamento CP" icon={Receipt} />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

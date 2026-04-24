@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   Settings, RefreshCw, Check, ChevronDown, AlertCircle,
-  CheckCircle2, Clock, MinusCircle,
+  CheckCircle2, Clock, MinusCircle, Upload,
 } from 'lucide-react';
 import { SyncAPI } from '@/api/sync';
 import { SyncDiasAPI, type SyncDia } from '@/api/syncDias';
@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Unidade, ParcelaPagar } from '@/types';
+import ImportarCaixaModal from '@/components/ImportarCaixaModal';
 
 // ── XML Parser (mesmo do DashboardPage) ─────────────────────────
 const PARCELA_FIELDS = [
@@ -102,6 +103,9 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
   const [syncProgress, setSyncProgress] = useState('');
   const [syncError, setSyncError] = useState('');
   const [syncSuccess, setSyncSuccess] = useState('');
+
+  // Modal de importação de Caixa (PDF)
+  const [caixaModalOpen, setCaixaModalOpen] = useState(false);
 
   // Mapa de status: { [unidadeId]: { [YYYY-MM]: SyncMapEntry } }
   const [syncMap, setSyncMap] = useState<Record<string, Record<string, SyncMapEntry>>>({});
@@ -413,6 +417,18 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
               <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
               {syncing ? 'Sincronizando...' : 'Sincronizar'}
             </Button>
+
+            {/* Botão importar Caixa */}
+            <Button
+              variant="outline"
+              onClick={() => setCaixaModalOpen(true)}
+              disabled={syncing}
+              className="gap-2 font-semibold h-10 px-5"
+              title="Importa despesas pagas pelo Caixa a partir do PDF do relatório Fluxo de Caixa do Sponte."
+            >
+              <Upload size={15} />
+              Importar Despesas do Caixa
+            </Button>
           </div>
 
           {/* Progresso */}
@@ -578,6 +594,15 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
           </div>
         </Card>
       </section>
+
+      {caixaModalOpen && (
+        <ImportarCaixaModal
+          unidades={unidades}
+          accentColor={accentColor}
+          onClose={() => setCaixaModalOpen(false)}
+          onImportado={() => { loadSyncMap(); }}
+        />
+      )}
     </div>
   );
 }

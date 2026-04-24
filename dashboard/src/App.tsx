@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import UnidadesPage from './pages/UnidadesPage';
 import CategoriasPage from './pages/CategoriasPage';
 import PlanejamentoPage from './pages/PlanejamentoPage';
+import LancamentoCPPage from './pages/LancamentoCPPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import ConfiguracoesGraficosPage from './pages/ConfiguracoesGraficosPage';
 import ConfiguracoesSyncPage from './pages/ConfiguracoesSyncPage';
@@ -134,6 +135,11 @@ function AppShell() {
                 <Route path="/planejamento" element={
                   <ProtectedRoute minRole="viewer">
                     <PlanejamentoPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                  </ProtectedRoute>
+                } />
+                <Route path="/lancamento-cp" element={
+                  <ProtectedRoute minRole="viewer">
+                    <LancamentoCPPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/categorias" element={
