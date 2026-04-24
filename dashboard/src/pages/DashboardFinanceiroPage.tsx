@@ -936,6 +936,12 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                 {fluxo12m.map((d, i) => (
                   <Cell key={i} fill={d.acumulado >= 0 ? '#10b981' : '#ef4444'} />
                 ))}
+                <LabelList
+                  dataKey="acumulado"
+                  position="top"
+                  formatter={(v: number) => `R$ ${fmtCompact(v)}`}
+                  style={{ fontSize: 10, fill: '#475569', fontWeight: 600 }}
+                />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
