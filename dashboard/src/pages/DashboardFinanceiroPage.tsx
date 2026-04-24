@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ComposedChart, Line, LabelList, Cell, Legend,
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, Wallet, AlertTriangle, Clock, Users, BarChart3,
-  Percent, RefreshCw, AlertCircle,
+  TrendingUp, TrendingDown, Wallet, AlertTriangle, Clock, Users,
+  Percent, RefreshCw, AlertCircle, Wifi, CalendarDays, ChevronDown,
 } from 'lucide-react';
 import type { Unidade } from '../types';
 import { supabase } from '../lib/supabase';
@@ -56,6 +56,45 @@ const ym = (d: Date | string): string => {
 };
 
 const hojeZero = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+
+// Mes anterior ao corrente (ultimo mes fechado)
+const getMesRefDefault = (): string => {
+  const d = hojeZero();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return ym(d);
+};
+
+// Constroi lista de meses (YYYY-MM) terminando em mesRef e voltando N meses
+const mesesAte = (mesRef: string, n: number): { key: string; mes: number; ano: number; label: string }[] => {
+  const [anoR, mR] = mesRef.split('-').map(Number);
+  const base = new Date(anoR, mR - 1, 1);
+  const arr: { key: string; mes: number; ano: number; label: string }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    arr.push({
+      key: ym(d),
+      mes: d.getMonth(),
+      ano: d.getFullYear(),
+      label: `${MONTH_NAMES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`,
+    });
+  }
+  return arr;
+};
+
+// Gera lista de meses disponiveis no filtro (ultimos 24 meses, excluindo mes corrente)
+const mesesDisponiveis = (): { value: string; label: string }[] => {
+  const d = hojeZero();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);                 // comeca no mes anterior
+  const MESES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const arr: { value: string; label: string }[] = [];
+  for (let i = 0; i < 24; i++) {
+    const dd = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    arr.push({ value: ym(dd), label: `${MESES_FULL[dd.getMonth()]} ${dd.getFullYear()}` });
+  }
+  return arr;
+};
 
 const isRecebidaCR = (r: LinhaCR) =>
   !!r.data_pagamento && !!r.situacao_parcela && r.situacao_parcela !== 'A Receber'
@@ -150,6 +189,25 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Mes de referencia (ultimo fechado). Default = mes anterior.
+  const [mesRef, setMesRef] = useState<string>(getMesRefDefault);
+  const [showMesDropdown, setShowMesDropdown] = useState(false);
+  const mesBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!showMesDropdown) return;
+    const close = (e: MouseEvent) => {
+      if (mesBtnRef.current && !mesBtnRef.current.contains(e.target as Node)) {
+        setShowMesDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showMesDropdown]);
+
+  const mesesLista = useMemo(() => mesesDisponiveis(), []);
+  const mesRefLabel = mesesLista.find(m => m.value === mesRef)?.label || mesRef;
+
   // Unidade scope: se ha activeUnidade, so essa; senao todas
   const unidadeIds = useMemo(
     () => activeUnidade ? [activeUnidade.id] : unidades.map(u => u.id),
@@ -195,12 +253,14 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
   useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [unidadeIds.join(',')]);
 
   // ── Derivações ───────────────────────────────────────────────────────────
-  const mesAtualKey = useMemo(() => ym(hojeZero()), []);
+  // mesAtualKey = mes de referencia (ultimo fechado)
+  // mesAnteriorKey = mes imediatamente anterior ao de referencia
+  const mesAtualKey = mesRef;
   const mesAnteriorKey = useMemo(() => {
-    const d = hojeZero();
-    d.setMonth(d.getMonth() - 1);
+    const [ano, m] = mesRef.split('-').map(Number);
+    const d = new Date(ano, m - 2, 1);
     return ym(d);
-  }, []);
+  }, [mesRef]);
 
   // KPIs do mês atual
   const kpis = useMemo(() => {
@@ -284,19 +344,9 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
     };
   }, [cp, cr, mesAtualKey, mesAnteriorKey]);
 
-  // Fluxo de Caixa 12m — bars CR/CP + linha saldo acumulado
+  // Fluxo de Caixa 12m — bars CR/CP + linha saldo acumulado (termina em mesRef)
   const fluxo12m = useMemo(() => {
-    const base = hojeZero();
-    const meses: { key: string; ano: number; mes: number; label: string }[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      meses.push({
-        key: ym(d),
-        ano: d.getFullYear(),
-        mes: d.getMonth(),
-        label: `${MONTH_NAMES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`,
-      });
-    }
+    const meses = mesesAte(mesRef, 12);
     const receitaPorMes: Record<string, number> = {};
     const despesaPorMes: Record<string, number> = {};
     meses.forEach(m => { receitaPorMes[m.key] = 0; despesaPorMes[m.key] = 0; });
@@ -324,16 +374,11 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
         acumulado: acum,
       };
     });
-  }, [cp, cr]);
+  }, [cp, cr, mesRef]);
 
-  // Previsto x Realizado (12m)
+  // Previsto x Realizado (12m terminando em mesRef)
   const prevReal12m = useMemo(() => {
-    const base = hojeZero();
-    const meses: { key: string; label: string }[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      meses.push({ key: ym(d), label: `${MONTH_NAMES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}` });
-    }
+    const meses = mesesAte(mesRef, 12);
     const init = () => meses.reduce((a, m) => ({ ...a, [m.key]: 0 }), {} as Record<string, number>);
     const prevCR = init(), realCR = init(), prevCP = init(), realCP = init();
 
@@ -364,7 +409,7 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       previstoCP: prevCP[m.key],
       realizadoCP: realCP[m.key],
     }));
-  }, [cp, cr]);
+  }, [cp, cr, mesRef]);
 
   // Aging CP proximos 90 dias (0-30, 31-60, 61-90)
   const agingCP = useMemo(() => {
@@ -480,14 +525,9 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       .slice(0, 20);
   }, [cp, unidades]);
 
-  // Margem por unidade × mês (últimos 6 meses) — heatmap
+  // Margem por unidade × mês (12 meses terminando em mesRef) — com totais
   const margemMatriz = useMemo(() => {
-    const base = hojeZero();
-    const meses: { key: string; label: string }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      meses.push({ key: ym(d), label: `${MONTH_NAMES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}` });
-    }
+    const meses = mesesAte(mesRef, 12);
 
     // { uid: { mesKey: { receita, despesa } } }
     const dados: Record<string, Record<string, { receita: number; despesa: number }>> = {};
@@ -509,7 +549,9 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
 
     const linhas = unidades
       .map(u => ({
+        id: u.id,
         nome: u.nome,
+        cor: u.cor,
         celulas: meses.map(m => {
           const { receita, despesa } = dados[u.id][m.key];
           const resultado = receita - despesa;
@@ -519,8 +561,20 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       }))
       .filter(l => l.celulas.some(c => c.receita > 0 || c.despesa > 0));
 
-    return { meses, linhas };
-  }, [cp, cr, unidades]);
+    // Total geral por mes
+    const totais = meses.map(m => {
+      let receita = 0, despesa = 0;
+      for (const l of linhas) {
+        const c = l.celulas.find(c => c.mesKey === m.key);
+        if (c) { receita += c.receita; despesa += c.despesa; }
+      }
+      const resultado = receita - despesa;
+      const margem = receita > 0 ? (resultado / receita) * 100 : null;
+      return { mesKey: m.key, receita, despesa, resultado, margem };
+    });
+
+    return { meses, linhas, totais };
+  }, [cp, cr, unidades, mesRef]);
 
   // Cor por % margem (heatmap)
   const margemBg = (m: number | null): string => {
@@ -542,23 +596,74 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
   const sub = activeUnidade?.nome || `${unidades.length} unidade${unidades.length !== 1 ? 's' : ''}`;
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="max-w-[1440px] mx-auto px-6 py-4 animate-fade-in space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <header className="flex justify-between items-center mb-3 pb-3 border-b border-border/50 flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <BarChart3 size={22} style={{ color: accentColor }} />
-            Dashboard Financeiro
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Visão estratégica — {sub}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1
+              className="text-[1.2rem] font-extrabold tracking-tight flex items-center gap-2 flex-wrap"
+              style={{
+                backgroundImage: `linear-gradient(135deg, ${accentColor}, ${accentColor}aa)`,
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+              }}
+            >
+              Dashboard · Financeiro
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[0.65rem] font-semibold">
+              <Wifi size={11} /> Banco Local
+            </span>
+            <span className="text-muted-foreground text-[0.65rem]">Visão estratégica — {sub}</span>
+          </div>
         </div>
-        <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
-          <RefreshCw size={14} className={cn('mr-1.5', loading && 'animate-spin')} />
-          Atualizar
-        </Button>
-      </div>
+
+        <div className="flex items-center gap-2 flex-wrap relative z-[15]">
+          {/* Mês de referência */}
+          <div className="relative">
+            <button
+              ref={mesBtnRef}
+              className={cn(
+                'flex items-center gap-1.5 bg-card/75 border border-border px-2.5 py-1.5 rounded-lg text-xs transition-all min-w-[180px] justify-between backdrop-blur',
+                showMesDropdown ? 'border-primary ring-2 ring-primary/20' : 'hover:border-primary/40'
+              )}
+              onClick={() => setShowMesDropdown(d => !d)}
+            >
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarDays size={13} style={{ color: accentColor }} />
+                <span className="text-xs text-foreground font-medium">{mesRefLabel}</span>
+              </div>
+              <ChevronDown size={11} className={cn('text-muted-foreground transition-transform', showMesDropdown && 'rotate-180')} />
+            </button>
+            {showMesDropdown && (
+              <div className="absolute top-[calc(100%+6px)] right-0 bg-popover border border-border rounded-xl p-1.5 z-[60] min-w-[200px] max-h-[360px] overflow-y-auto shadow-2xl">
+                {mesesLista.map(m => {
+                  const isSel = m.value === mesRef;
+                  return (
+                    <button
+                      key={m.value}
+                      className={cn(
+                        'flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors',
+                        isSel ? 'font-semibold text-white' : 'text-foreground hover:bg-black/5'
+                      )}
+                      style={isSel ? { background: accentColor } : {}}
+                      onClick={() => { setMesRef(m.value); setShowMesDropdown(false); }}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
+            <RefreshCw size={14} className={cn('mr-1.5', loading && 'animate-spin')} />
+            Atualizar
+          </Button>
+        </div>
+      </header>
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-50 px-4 py-3 text-red-700 text-sm">
@@ -615,6 +720,117 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
           sub={`${kpis.sacadosMes} sacado${kpis.sacadosMes !== 1 ? 's' : ''} no mês`}
         />
       </div>
+
+      {/* Tabela Margem operacional por Unidade × Mês — estilo Planejamento */}
+      <Card className="overflow-hidden border-0 shadow-md p-0" style={{ borderTop: `3px solid ${accentColor}` }}>
+        <div className="px-5 py-2.5 flex items-center justify-between" style={{ background: accentColor }}>
+          <div className="flex items-center gap-2">
+            <CalendarDays size={14} className="text-white/80" />
+            <span className="text-[0.72rem] font-bold text-white uppercase tracking-widest">
+              Margem Operacional · 12 meses (até {mesRefLabel})
+            </span>
+          </div>
+          {loading && <RefreshCw size={11} className="animate-spin text-white/70" />}
+        </div>
+
+        {margemMatriz.linhas.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-6 text-center">Sem dados suficientes no período.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr style={{ background: `${accentColor}15` }}>
+                  <th
+                    className="text-left px-4 py-2 font-bold text-[0.6rem] text-slate-500 uppercase tracking-widest whitespace-nowrap min-w-[150px] border-b border-r"
+                    style={{ borderColor: `${accentColor}25` }}
+                  >
+                    Unidade
+                  </th>
+                  {margemMatriz.meses.map(m => {
+                    const isRef = m.key === mesRef;
+                    return (
+                      <th
+                        key={m.key}
+                        className="text-center px-3 py-2 font-bold text-[0.6rem] uppercase tracking-widest whitespace-nowrap border-b min-w-[80px]"
+                        style={{
+                          borderColor: `${accentColor}25`,
+                          background: isRef ? accentColor : undefined,
+                          color: isRef ? '#fff' : undefined,
+                        }}
+                      >
+                        {m.label}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+
+              <tbody>
+                {margemMatriz.linhas.map((linha, idx) => (
+                  <tr
+                    key={linha.id}
+                    className="hover:brightness-95 transition-all border-b"
+                    style={{
+                      borderColor: `${accentColor}15`,
+                      background: idx % 2 === 0 ? '#fff' : `${accentColor}05`,
+                    }}
+                  >
+                    <td className="px-4 py-2 whitespace-nowrap border-r" style={{ borderColor: `${accentColor}20` }}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: linha.cor }} />
+                        <span className="font-bold text-[0.68rem]" style={{ color: linha.cor }}>{linha.nome}</span>
+                      </div>
+                    </td>
+                    {linha.celulas.map(c => {
+                      const isRef = c.mesKey === mesRef;
+                      return (
+                        <td
+                          key={c.mesKey}
+                          className="text-center px-3 py-2 tabular-nums text-[0.68rem] transition-all"
+                          style={{
+                            backgroundColor: margemBg(c.margem),
+                            outline: isRef ? `2px solid ${accentColor}55` : undefined,
+                            outlineOffset: '-2px',
+                            color: c.margem == null ? '#d1d5db' : c.margem < 0 ? '#b91c1c' : '#065f46',
+                            fontWeight: c.margem != null ? 600 : 400,
+                          }}
+                          title={`Receita R$ ${fmtBRL(c.receita)} · Despesa R$ ${fmtBRL(c.despesa)} · Resultado R$ ${fmtBRL(c.resultado)}`}
+                        >
+                          {c.margem == null ? '—' : `${c.margem.toFixed(1)}%`}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+
+                {margemMatriz.linhas.length > 1 && (
+                  <tr style={{ background: accentColor }}>
+                    <td className="px-4 py-2.5 whitespace-nowrap border-r border-white/20">
+                      <span className="font-extrabold text-[0.65rem] uppercase tracking-widest text-white">Total Geral</span>
+                    </td>
+                    {margemMatriz.totais.map(t => {
+                      const isRef = t.mesKey === mesRef;
+                      return (
+                        <td
+                          key={t.mesKey}
+                          className="text-center px-3 py-2.5 tabular-nums text-[0.68rem] font-extrabold"
+                          style={{
+                            color: t.margem == null ? 'rgba(255,255,255,0.3)' : '#fff',
+                            background: isRef ? 'rgba(0,0,0,0.15)' : undefined,
+                          }}
+                          title={`Receita R$ ${fmtBRL(t.receita)} · Despesa R$ ${fmtBRL(t.despesa)} · Resultado R$ ${fmtBRL(t.resultado)}`}
+                        >
+                          {t.margem == null ? '—' : `${t.margem.toFixed(1)}%`}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {/* Gráfico 1 — Fluxo de Caixa 12m */}
       <Card className="p-4">
@@ -796,53 +1012,6 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                     <TableCell className="text-xs text-muted-foreground">{row.categoria}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{row.unidade}</TableCell>
                     <TableCell className="text-xs text-right font-semibold tabular-nums">R$ {fmtBRL(row.valor)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </Card>
-
-      {/* Tabela 3 — Margem por unidade × mês (heatmap) */}
-      <Card className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Margem operacional por Unidade × Mês</h2>
-          <p className="text-xs text-muted-foreground">Últimos 6 meses — verde = positiva, vermelho = negativa</p>
-        </div>
-        {margemMatriz.linhas.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-6 text-center">Sem dados suficientes nos últimos 6 meses.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs sticky left-0 bg-background">Unidade</TableHead>
-                  {margemMatriz.meses.map(m => (
-                    <TableHead key={m.key} className="text-xs text-center min-w-[88px]">{m.label}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {margemMatriz.linhas.map(linha => (
-                  <TableRow key={linha.nome}>
-                    <TableCell className="text-xs font-medium sticky left-0 bg-background">{linha.nome}</TableCell>
-                    {linha.celulas.map(c => (
-                      <TableCell
-                        key={c.mesKey}
-                        className="text-xs text-center tabular-nums p-1"
-                        style={{ backgroundColor: margemBg(c.margem) }}
-                        title={`Receita R$ ${fmtBRL(c.receita)} · Despesa R$ ${fmtBRL(c.despesa)} · Resultado R$ ${fmtBRL(c.resultado)}`}
-                      >
-                        {c.margem == null ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          <span className={cn('font-medium', c.margem < 0 && 'text-rose-700')}>
-                            {c.margem.toFixed(1)}%
-                          </span>
-                        )}
-                      </TableCell>
-                    ))}
                   </TableRow>
                 ))}
               </TableBody>

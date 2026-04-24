@@ -172,7 +172,7 @@ export default function AppSidebar({
                     </SidebarMenuButton>
                   </Collapsible.Trigger>
                   <Collapsible.Content>
-                    <SidebarMenuSub>
+                    <SidebarMenuSub className="border-l-0 mx-0 px-1">
                       {cpSubItems.map(({ to, end, label, icon: Icon }) => (
                         <SidebarMenuSubItem key={to}>
                           <NavLink to={to} end={end}>
@@ -217,7 +217,7 @@ export default function AppSidebar({
                     </SidebarMenuButton>
                   </Collapsible.Trigger>
                   <Collapsible.Content>
-                    <SidebarMenuSub>
+                    <SidebarMenuSub className="border-l-0 mx-0 px-1">
                       {crSubItems.map(({ to, label, icon: Icon }) => (
                         <SidebarMenuSubItem key={to}>
                           <NavLink to={to}>
@@ -305,7 +305,7 @@ export default function AppSidebar({
                     </Collapsible.Trigger>
 
                     <Collapsible.Content>
-                      <SidebarMenuSub>
+                      <SidebarMenuSub className="border-l-0 mx-0 px-1">
                         {configSubItems.map(({ to, label, icon: Icon }) => (
                           <SidebarMenuSubItem key={to}>
                             <NavLink to={to}>
