@@ -4,8 +4,8 @@ import {
   ComposedChart, Line, LabelList, Cell, Legend,
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, Wallet, AlertTriangle, Clock, Users,
-  Percent, RefreshCw, AlertCircle, Wifi, CalendarDays, ChevronDown,
+  TrendingUp, Wallet, Users,
+  Percent, RefreshCw, AlertCircle, Wifi, CalendarDays, ChevronDown, Info,
 } from 'lucide-react';
 import type { Unidade } from '../types';
 import { supabase } from '../lib/supabase';
@@ -133,52 +133,17 @@ async function fetchRange<T>(table: string, unidadeIds: string[], startStr: stri
   return all;
 }
 
-// ── KPI Card ────────────────────────────────────────────────────────────────
-function KpiCard({
-  title, value, icon: Icon, delta, deltaLabel, tone, sub,
-}: {
-  title: string;
-  value: string;
-  icon: React.ElementType;
-  delta?: number | null;
-  deltaLabel?: string;
-  tone?: 'positive' | 'negative' | 'neutral' | 'warning';
-  sub?: string;
-}) {
-  const toneBg =
-    tone === 'positive' ? 'bg-emerald-500/10 text-emerald-600' :
-    tone === 'negative' ? 'bg-rose-500/10 text-rose-600'       :
-    tone === 'warning'  ? 'bg-amber-500/10 text-amber-600'     :
-                          'bg-slate-500/10 text-slate-600';
-
-  const deltaTone =
-    delta == null      ? 'text-muted-foreground'                :
-    delta > 0          ? 'text-emerald-600'                     :
-    delta < 0          ? 'text-rose-600'                        :
-                         'text-muted-foreground';
-
-  const DeltaIcon = delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
-
+// ── Help Hint ───────────────────────────────────────────────────────────────
+// Icone de ajuda com tooltip nativo explicando a metrica
+function HelpHint({ text }: { text: string }) {
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">{title}</p>
-          <p className="text-2xl font-semibold mt-1 truncate">{value}</p>
-          {sub && <p className="text-[0.7rem] text-muted-foreground mt-0.5 truncate">{sub}</p>}
-        </div>
-        <div className={cn('p-2 rounded-lg flex-shrink-0', toneBg)}>
-          <Icon size={18} />
-        </div>
-      </div>
-      {delta != null && DeltaIcon && (
-        <div className={cn('flex items-center gap-1 text-xs mt-3', deltaTone)}>
-          <DeltaIcon size={12} />
-          <span className="font-medium">{delta > 0 ? '+' : ''}{delta.toFixed(1)}%</span>
-          {deltaLabel && <span className="text-muted-foreground ml-1">{deltaLabel}</span>}
-        </div>
-      )}
-    </Card>
+    <span
+      title={text}
+      aria-label={text}
+      className="inline-flex items-center text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-help flex-shrink-0"
+    >
+      <Info size={13} />
+    </span>
   );
 }
 
@@ -262,20 +227,17 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
     return ym(d);
   }, [mesRef]);
 
-  // KPIs do mês atual
+  // KPIs
   const kpis = useMemo(() => {
-    const hoje = hojeZero();
-
-    // Realizados (data_pagamento no mes)
+    // --- Realizados do mes de referencia vs mes anterior ---
     let recebidoMes = 0, recebidoMesAnt = 0;
     let pagoMes = 0, pagoMesAnt = 0;
-    const sacadosMes = new Set<string>();
 
     for (const r of cr) {
       if (!isRecebidaCR(r) || !r.data_pagamento) continue;
       const k = ym(r.data_pagamento);
-      if (k === mesAtualKey)    { recebidoMes    += valorRealizado(r); if (r.aluno_id != null) sacadosMes.add(String(r.aluno_id)); else if (r.sacado) sacadosMes.add(r.sacado); }
-      if (k === mesAnteriorKey) { recebidoMesAnt += valorRealizado(r); }
+      if (k === mesAtualKey)    recebidoMes    += valorRealizado(r);
+      if (k === mesAnteriorKey) recebidoMesAnt += valorRealizado(r);
     }
     for (const r of cp) {
       if (!isPagaCP(r) || !r.data_pagamento) continue;
@@ -288,7 +250,7 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
     const resultadoMesAnt = recebidoMesAnt - pagoMesAnt;
     const deltaResultado  = resultadoMesAnt !== 0 ? ((resultadoMes - resultadoMesAnt) / Math.abs(resultadoMesAnt)) * 100 : null;
 
-    // Previsto (vencimento no mes, sem pagamento)
+    // --- Previsto (vencimento no mes, sem pagamento) ---
     let previstoReceber = 0;
     let previstoPagar = 0;
     for (const r of cr) {
@@ -303,29 +265,45 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
     }
     const resultadoPrevisto = previstoReceber - previstoPagar;
 
-    // Margem
-    const margem = recebidoMes > 0 ? (resultadoMes / recebidoMes) * 100 : 0;
-    const margemAnt = recebidoMesAnt > 0 ? (resultadoMesAnt / recebidoMesAnt) * 100 : 0;
-    const deltaMargem = recebidoMesAnt > 0 ? (margem - margemAnt) : null;
+    // --- Agregados 12 meses (ate mesRef) — ticket medio e margem ---
+    const meses12 = mesesAte(mesAtualKey, 12);
+    const meses12Set = new Set(meses12.map(m => m.key));
+    const receita12: Record<string, number> = {};
+    const despesa12: Record<string, number> = {};
+    meses12.forEach(m => { receita12[m.key] = 0; despesa12[m.key] = 0; });
 
-    // Inadimplência CR: vencido, nao recebido, nao cancelado
-    let inadimpCR = 0;
+    let recebido12m = 0;
+    const sacados12m = new Set<string>();
     for (const r of cr) {
-      if (isRecebidaCR(r) || isCancelada(r) || !r.vencimento) continue;
-      const v = new Date(`${r.vencimento}T00:00:00`);
-      if (v < hoje) inadimpCR += r.valor_parcela;
+      if (!isRecebidaCR(r) || !r.data_pagamento) continue;
+      const k = ym(r.data_pagamento);
+      if (!meses12Set.has(k)) continue;
+      const v = valorRealizado(r);
+      receita12[k] += v;
+      recebido12m += v;
+      if (r.aluno_id != null) sacados12m.add(`a:${r.aluno_id}`);
+      else if (r.sacado)      sacados12m.add(`s:${r.sacado}`);
     }
-
-    // CP em atraso
-    let atrasoCP = 0;
     for (const r of cp) {
-      if (isPagaCP(r) || isCancelada(r) || !r.vencimento) continue;
-      const v = new Date(`${r.vencimento}T00:00:00`);
-      if (v < hoje) atrasoCP += r.valor_parcela;
+      if (!isPagaCP(r) || !r.data_pagamento) continue;
+      const k = ym(r.data_pagamento);
+      if (!meses12Set.has(k)) continue;
+      despesa12[k] += valorRealizado(r);
     }
 
-    // Ticket médio: recebido no mes / nº sacados (alunos) distintos
-    const ticketMedio = sacadosMes.size > 0 ? recebidoMes / sacadosMes.size : 0;
+    // Margem operacional = media simples das margens mensais (meses com receita > 0)
+    const margensMensais: number[] = [];
+    for (const m of meses12) {
+      const rec = receita12[m.key];
+      if (rec > 0) {
+        margensMensais.push(((rec - despesa12[m.key]) / rec) * 100);
+      }
+    }
+    const margem12m = margensMensais.length
+      ? margensMensais.reduce((a, b) => a + b, 0) / margensMensais.length
+      : 0;
+
+    const ticketMedio12m = sacados12m.size > 0 ? recebido12m / sacados12m.size : 0;
 
     return {
       resultadoMes,
@@ -335,12 +313,11 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       resultadoPrevisto,
       previstoReceber,
       previstoPagar,
-      margem,
-      deltaMargem,
-      inadimpCR,
-      atrasoCP,
-      ticketMedio,
-      sacadosMes: sacadosMes.size,
+      margem12m,
+      margemMesesValidos: margensMensais.length,
+      ticketMedio12m,
+      sacados12m: sacados12m.size,
+      recebido12m,
     };
   }, [cp, cr, mesAtualKey, mesAnteriorKey]);
 
@@ -525,9 +502,9 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       .slice(0, 20);
   }, [cp, unidades]);
 
-  // Margem por unidade × mês (12 meses terminando em mesRef) — com totais
+  // Margem por unidade × mês (6 meses terminando em mesRef) — com totais + média
   const margemMatriz = useMemo(() => {
-    const meses = mesesAte(mesRef, 12);
+    const meses = mesesAte(mesRef, 6);
 
     // { uid: { mesKey: { receita, despesa } } }
     const dados: Record<string, Record<string, { receita: number; despesa: number }>> = {};
@@ -547,22 +524,33 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       if (dados[r.unidade_id]?.[k]) dados[r.unidade_id][k].despesa += valorRealizado(r);
     }
 
+    // Media simples das margens mensais validas (receita > 0)
+    const mediaMargens = (celulas: { margem: number | null }[]): number | null => {
+      const validas = celulas.map(c => c.margem).filter((m): m is number => m != null);
+      if (validas.length === 0) return null;
+      return validas.reduce((a, b) => a + b, 0) / validas.length;
+    };
+
     const linhas = unidades
-      .map(u => ({
-        id: u.id,
-        nome: u.nome,
-        cor: u.cor,
-        celulas: meses.map(m => {
+      .map(u => {
+        const celulas = meses.map(m => {
           const { receita, despesa } = dados[u.id][m.key];
           const resultado = receita - despesa;
           const margem = receita > 0 ? (resultado / receita) * 100 : null;
           return { mesKey: m.key, receita, despesa, resultado, margem };
-        }),
-      }))
+        });
+        return {
+          id: u.id,
+          nome: u.nome,
+          cor: u.cor,
+          celulas,
+          media: mediaMargens(celulas),
+        };
+      })
       .filter(l => l.celulas.some(c => c.receita > 0 || c.despesa > 0));
 
-    // Total geral por mes
-    const totais = meses.map(m => {
+    // Total geral por mes + media
+    const totaisCelulas = meses.map(m => {
       let receita = 0, despesa = 0;
       for (const l of linhas) {
         const c = l.celulas.find(c => c.mesKey === m.key);
@@ -572,6 +560,7 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       const margem = receita > 0 ? (resultado / receita) * 100 : null;
       return { mesKey: m.key, receita, despesa, resultado, margem };
     });
+    const totais = { celulas: totaisCelulas, media: mediaMargens(totaisCelulas) };
 
     return { meses, linhas, totais };
   }, [cp, cr, unidades, mesRef]);
@@ -672,53 +661,95 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
         </div>
       )}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-        <KpiCard
-          title="Resultado do mês"
-          value={`R$ ${fmtBRL(kpis.resultadoMes)}`}
-          icon={Wallet}
-          tone={kpis.resultadoMes >= 0 ? 'positive' : 'negative'}
-          delta={kpis.deltaResultado}
-          deltaLabel="vs. mês anterior"
-          sub={`Receb. R$ ${fmtCompact(kpis.recebidoMes)} − Pago R$ ${fmtCompact(kpis.pagoMes)}`}
-        />
-        <KpiCard
-          title="Resultado previsto"
-          value={`R$ ${fmtBRL(kpis.resultadoPrevisto)}`}
-          icon={TrendingUp}
-          tone={kpis.resultadoPrevisto >= 0 ? 'positive' : 'negative'}
-          sub={`Rec. R$ ${fmtCompact(kpis.previstoReceber)} − Desp. R$ ${fmtCompact(kpis.previstoPagar)}`}
-        />
-        <KpiCard
-          title="Margem operacional"
-          value={`${kpis.margem.toFixed(1)}%`}
-          icon={Percent}
-          tone={kpis.margem >= 0 ? 'positive' : 'negative'}
-          delta={kpis.deltaMargem}
-          deltaLabel="pp vs. mês anterior"
-        />
-        <KpiCard
-          title="Inadimplência CR"
-          value={`R$ ${fmtBRL(kpis.inadimpCR)}`}
-          icon={AlertTriangle}
-          tone="warning"
-          sub="Vencido não recebido"
-        />
-        <KpiCard
-          title="CP em atraso"
-          value={`R$ ${fmtBRL(kpis.atrasoCP)}`}
-          icon={Clock}
-          tone="warning"
-          sub="Vencido não pago"
-        />
-        <KpiCard
-          title="Ticket médio"
-          value={`R$ ${fmtBRL(kpis.ticketMedio)}`}
-          icon={Users}
-          tone="neutral"
-          sub={`${kpis.sacadosMes} sacado${kpis.sacadosMes !== 1 ? 's' : ''} no mês`}
-        />
+      {/* KPI Cards — estilo Contas a Receber */}
+      <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2 max-[600px]:grid-cols-1">
+        {/* Resultado do mes */}
+        <Card className="relative overflow-hidden p-4">
+          <div className={cn('absolute top-0 left-0 h-1 w-full', kpis.resultadoMes >= 0 ? 'bg-emerald-500' : 'bg-red-500')} />
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[0.7rem] text-muted-foreground font-medium uppercase tracking-wide flex items-center gap-1">
+                Resultado do mês
+                <HelpHint text="Receita recebida (CR quitado) menos despesa paga (CP quitado) no mês de referência. Considera data_pagamento, não vencimento. Variação % comparada ao mês anterior." />
+              </p>
+              <p className={cn('text-xl font-bold mt-1', kpis.resultadoMes >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                R$ {fmtBRL(kpis.resultadoMes)}
+              </p>
+              <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                Receb. R$ {fmtCompact(kpis.recebidoMes)} − Pago R$ {fmtCompact(kpis.pagoMes)}
+              </p>
+            </div>
+            <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', kpis.resultadoMes >= 0 ? 'bg-emerald-100' : 'bg-red-100')}>
+              <Wallet size={18} className={kpis.resultadoMes >= 0 ? 'text-emerald-600' : 'text-red-600'} />
+            </div>
+          </div>
+        </Card>
+
+        {/* Resultado previsto */}
+        <Card className="relative overflow-hidden p-4">
+          <div className={cn('absolute top-0 left-0 h-1 w-full', kpis.resultadoPrevisto >= 0 ? 'bg-emerald-500' : 'bg-red-500')} />
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[0.7rem] text-muted-foreground font-medium uppercase tracking-wide flex items-center gap-1">
+                Resultado previsto
+                <HelpHint text="Diferença entre parcelas de CR e CP com vencimento no mês de referência, considerando apenas parcelas não canceladas (independente de terem sido pagas)." />
+              </p>
+              <p className={cn('text-xl font-bold mt-1', kpis.resultadoPrevisto >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                R$ {fmtBRL(kpis.resultadoPrevisto)}
+              </p>
+              <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                Rec. R$ {fmtCompact(kpis.previstoReceber)} − Desp. R$ {fmtCompact(kpis.previstoPagar)}
+              </p>
+            </div>
+            <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', kpis.resultadoPrevisto >= 0 ? 'bg-emerald-100' : 'bg-red-100')}>
+              <TrendingUp size={18} className={kpis.resultadoPrevisto >= 0 ? 'text-emerald-600' : 'text-red-600'} />
+            </div>
+          </div>
+        </Card>
+
+        {/* Margem operacional — media 12m */}
+        <Card className="relative overflow-hidden p-4">
+          <div className={cn('absolute top-0 left-0 h-1 w-full', kpis.margem12m >= 0 ? 'bg-emerald-500' : 'bg-red-500')} />
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[0.7rem] text-muted-foreground font-medium uppercase tracking-wide flex items-center gap-1">
+                Margem Operacional
+                <HelpHint text="Média simples das margens mensais ((Receita − Despesa) ÷ Receita × 100) apuradas nos últimos 12 meses que terminam no mês de referência. Meses sem receita são ignorados no cálculo." />
+              </p>
+              <p className={cn('text-xl font-bold mt-1', kpis.margem12m >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                {kpis.margem12m.toFixed(1)}%
+              </p>
+              <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                média dos últimos 12 meses
+              </p>
+            </div>
+            <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', kpis.margem12m >= 0 ? 'bg-emerald-100' : 'bg-red-100')}>
+              <Percent size={18} className={kpis.margem12m >= 0 ? 'text-emerald-600' : 'text-red-600'} />
+            </div>
+          </div>
+        </Card>
+
+        {/* Ticket medio — ultimo ano */}
+        <Card className="relative overflow-hidden p-4">
+          <div className="absolute top-0 left-0 h-1 w-full" style={{ background: accentColor }} />
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[0.7rem] text-muted-foreground font-medium uppercase tracking-wide flex items-center gap-1">
+                Ticket Médio
+                <HelpHint text="Total recebido nos últimos 12 meses (terminando no mês de referência) dividido pelo número de sacados (alunos) distintos que pagaram alguma parcela no mesmo período." />
+              </p>
+              <p className="text-xl font-bold mt-1" style={{ color: accentColor }}>
+                R$ {fmtBRL(kpis.ticketMedio12m)}
+              </p>
+              <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                {kpis.sacados12m} sacado{kpis.sacados12m !== 1 ? 's' : ''} nos últimos 12 meses
+              </p>
+            </div>
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
+              <Users size={18} style={{ color: accentColor }} />
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Tabela Margem operacional por Unidade × Mês — estilo Planejamento */}
@@ -727,7 +758,13 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
           <div className="flex items-center gap-2">
             <CalendarDays size={14} className="text-white/80" />
             <span className="text-[0.72rem] font-bold text-white uppercase tracking-widest">
-              Margem Operacional · 12 meses (até {mesRefLabel})
+              Margem Operacional · 6 meses (até {mesRefLabel})
+            </span>
+            <span
+              title="Margem mensal de cada unidade nos últimos 6 meses ((Receita − Despesa) ÷ Receita × 100, considerando data de pagamento). A coluna 'Média 6m' é a média simples das margens mensais válidas — meses sem receita são ignorados. O degradê de cores (vermelho → verde) indica a saúde financeira de cada célula."
+              className="inline-flex items-center text-white/70 hover:text-white cursor-help"
+            >
+              <Info size={13} />
             </span>
           </div>
           {loading && <RefreshCw size={11} className="animate-spin text-white/70" />}
@@ -762,6 +799,17 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                       </th>
                     );
                   })}
+                  <th
+                    className="text-center px-3 py-2 font-bold text-[0.6rem] uppercase tracking-widest whitespace-nowrap border-b border-l min-w-[90px]"
+                    style={{
+                      borderColor: `${accentColor}25`,
+                      background: `${accentColor}30`,
+                      color: accentColor,
+                    }}
+                    title="Média simples das margens mensais válidas nos últimos 6 meses"
+                  >
+                    Média 6m
+                  </th>
                 </tr>
               </thead>
 
@@ -800,6 +848,18 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                         </td>
                       );
                     })}
+                    {/* Media dos 6 meses */}
+                    <td
+                      className="text-center px-3 py-2 tabular-nums text-[0.68rem] border-l font-bold"
+                      style={{
+                        borderColor: `${accentColor}40`,
+                        backgroundColor: `${accentColor}12`,
+                        color: linha.media == null ? '#d1d5db' : linha.media < 0 ? '#b91c1c' : accentColor,
+                      }}
+                      title="Média simples das margens mensais nos últimos 6 meses"
+                    >
+                      {linha.media == null ? '—' : `${linha.media.toFixed(1)}%`}
+                    </td>
                   </tr>
                 ))}
 
@@ -808,7 +868,7 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                     <td className="px-4 py-2.5 whitespace-nowrap border-r border-white/20">
                       <span className="font-extrabold text-[0.65rem] uppercase tracking-widest text-white">Total Geral</span>
                     </td>
-                    {margemMatriz.totais.map(t => {
+                    {margemMatriz.totais.celulas.map(t => {
                       const isRef = t.mesKey === mesRef;
                       return (
                         <td
@@ -824,6 +884,17 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                         </td>
                       );
                     })}
+                    {/* Media dos 6 meses — total geral */}
+                    <td
+                      className="text-center px-3 py-2.5 tabular-nums text-[0.68rem] font-extrabold border-l border-white/20"
+                      style={{
+                        color: margemMatriz.totais.media == null ? 'rgba(255,255,255,0.3)' : '#fff',
+                        background: 'rgba(0,0,0,0.25)',
+                      }}
+                      title="Média simples das margens consolidadas dos últimos 6 meses"
+                    >
+                      {margemMatriz.totais.media == null ? '—' : `${margemMatriz.totais.media.toFixed(1)}%`}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -835,7 +906,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       {/* Gráfico 1 — Fluxo de Caixa 12m */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Fluxo de Caixa — últimos 12 meses</h2>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            Fluxo de Caixa — últimos 12 meses
+            <HelpHint text="Barras verdes = receita recebida (CR quitado) no mês. Barras vermelhas = despesa paga (CP quitado) no mês, apresentadas abaixo do eixo para contraste. Linha = saldo acumulado ao longo do período (soma de receita − despesa mês a mês, começando em zero no 1º mês exibido). Todos os valores usam a data de pagamento, não de vencimento." />
+          </h2>
           <p className="text-xs text-muted-foreground">Receita × Despesa + saldo acumulado</p>
         </div>
         <div className="h-72">
@@ -857,7 +931,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       {/* Gráfico 2 — Previsto x Realizado */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Previsto × Realizado — 12 meses</h2>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            Previsto × Realizado — 12 meses
+            <HelpHint text="Previsto = soma das parcelas com vencimento no mês, não canceladas (usa valor_parcela). Realizado = soma das parcelas efetivamente pagas/recebidas no mês (usa data_pagamento e valor_pago quando disponível). Verde claro/escuro = Contas a Receber; vermelho claro/escuro = Contas a Pagar. Permite ver gaps entre o planejado e o executado." />
+          </h2>
           <p className="text-xs text-muted-foreground">CR (verde) e CP (vermelho), barras claras = previsto</p>
         </div>
         <div className="h-72">
@@ -881,7 +958,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Aging — CP próximos 90 dias</h2>
+            <h2 className="text-sm font-semibold flex items-center gap-1.5">
+              Aging — CP próximos 90 dias
+              <HelpHint text="Contas a pagar em aberto (não pagas, não canceladas) distribuídas em 3 faixas por dias até o vencimento. Vermelho = já vencido (em atraso). Laranja = a vencer. Considera intervalo de ±90 dias em torno de hoje." />
+            </h2>
             <p className="text-xs text-muted-foreground">Por faixa de vencimento</p>
           </div>
           <div className="h-64">
@@ -905,7 +985,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
 
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Comparativo entre Unidades — mês atual</h2>
+            <h2 className="text-sm font-semibold flex items-center gap-1.5">
+              Comparativo entre Unidades — mês atual
+              <HelpHint text="Para o mês de referência: receita recebida (verde), despesa paga (vermelho) e resultado (receita − despesa; azul se positivo, vermelho escuro se negativo) por unidade. Ordenado por resultado (maior → menor). Só aparecem unidades com movimentação no mês." />
+            </h2>
             <p className="text-xs text-muted-foreground">Resultado ordenado</p>
           </div>
           <div className="h-64">
@@ -938,7 +1021,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       {/* Tabela 1 — Top 20 Inadimplentes CR */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Top 20 Inadimplentes — Contas a Receber</h2>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            Top 20 Inadimplentes — Contas a Receber
+            <HelpHint text="Sacados (alunos ou responsáveis) com maior valor em aberto vencido no CR. Agrupa todas as parcelas vencidas e não quitadas do mesmo sacado. 'Dias em atraso' é o maior atraso entre suas parcelas — pintado de vermelho se > 60d, âmbar se > 30d." />
+          </h2>
           <p className="text-xs text-muted-foreground">Vencido e não recebido</p>
         </div>
         {topInadimplentes.length === 0 ? (
@@ -985,7 +1071,10 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       {/* Tabela 2 — Top 20 Compromissos CP próximos 30 dias */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Compromissos CP — próximos 30 dias</h2>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            Compromissos CP — próximos 30 dias
+            <HelpHint text="Contas a pagar em aberto (não pagas, não canceladas) com vencimento entre hoje e os próximos 30 dias. Ordenado pela data de vencimento (mais próxima primeiro). Limite de 20 registros." />
+          </h2>
           <p className="text-xs text-muted-foreground">Ordenado por vencimento</p>
         </div>
         {topCompromissosCP.length === 0 ? (
