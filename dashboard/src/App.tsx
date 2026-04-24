@@ -7,6 +7,7 @@ import TopBar from './components/TopBar';
 import SuperAdminSidebar from './components/SuperAdminSidebar';
 import DashboardPage from './pages/DashboardPage';
 import DashboardReceitasPage from './pages/DashboardReceitasPage';
+import DashboardFinanceiroPage from './pages/DashboardFinanceiroPage';
 import UnidadesPage from './pages/UnidadesPage';
 import CategoriasPage from './pages/CategoriasPage';
 import CategoriasReceitasPage from './pages/CategoriasReceitasPage';
@@ -143,6 +144,11 @@ function AppShell() {
                 <Route path="/planejamento" element={
                   <ProtectedRoute minRole="viewer">
                     <PlanejamentoPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                  </ProtectedRoute>
+                } />
+                <Route path="/dashboard-financeiro" element={
+                  <ProtectedRoute minRole="viewer">
+                    <DashboardFinanceiroPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/lancamento-cp" element={

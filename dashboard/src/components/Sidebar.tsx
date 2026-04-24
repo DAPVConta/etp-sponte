@@ -8,6 +8,7 @@ import {
   Target,
   Receipt,
   DollarSign,
+  LineChart,
   Settings,
   Palette,
   BarChart3,
@@ -148,6 +149,7 @@ export default function AppSidebar({
           <SidebarGroupContent>
             <SidebarMenu>
               <NavItem to="/planejamento" label="Planejamento" icon={Target} />
+              <NavItem to="/dashboard-financeiro" label="Dashboard Financeiro" icon={LineChart} />
 
               {/* Contas a Pagar */}
               <Collapsible.Root open={cpOpen || cpActive} onOpenChange={setCpOpen} className="group/collapsible">
