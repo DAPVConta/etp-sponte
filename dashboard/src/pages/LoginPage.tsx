@@ -142,6 +142,9 @@ export default function LoginPage() {
         <p className="text-center text-xs text-muted-foreground mt-6">
           ETP Gestão — Acesso restrito
         </p>
+        <p className="text-center text-xs text-muted-foreground mt-1">
+          Versão 1.1.1
+        </p>
       </div>
     </div>
   );
