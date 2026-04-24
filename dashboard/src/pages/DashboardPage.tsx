@@ -32,6 +32,7 @@ import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from '@/components/ui/chart';
 import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { HelpHint } from '@/components/HelpHint';
 
 // ── XML Parser ──────────────────────────────────────────────────────────────
 const PARCELA_FIELDS = [
@@ -746,6 +747,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
               <div className="flex items-center gap-2">
                 <CalendarDays size={14} className="text-white/80" />
                 <span className="text-[0.72rem] font-bold text-white uppercase tracking-widest">Planejamento Anual {new Date().getFullYear()}</span>
+                <HelpHint text="Tabela comparativa do plano anual versus realizado por unidade × grupo contábil. Linha colorida = plano; abaixo aparece o realizado e o desvio (verde = abaixo do plano, vermelho = acima). O clique em uma linha filtra os cartões e gráficos abaixo pela categoria/unidade selecionada." className="text-white/70 hover:text-white" />
               </div>
               {loadingAnual && <RefreshCw size={11} className="animate-spin text-white/70" />}
             </div>
@@ -821,6 +823,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
               <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
                 Evolução Mensal · {new Date().getFullYear()}
                 {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                <HelpHint text="Evolução mês a mês do realizado (barras) e do planejado (linha) no ano corrente. Quando nenhuma unidade específica está ativa, as barras ficam empilhadas por unidade. O realizado soma ValorPago (ou ValorParcela quando não houver pagamento) pela data de pagamento. O planejado vem da tabela de planejamento anual." />
               </h2>
               {(() => {
                   const isStacked = !activeUnidade && !!monthlyDataArrayStacked;
@@ -942,7 +945,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
             );
             case 'heatmap': return (
               <Card className="p-4 animate-fade-in-up" style={{ animationDelay: '325ms' }}>
-                <h2 className="text-sm font-bold mb-0.5">Mapa de calor — desvio planejado vs realizado por mês</h2>
+                <h2 className="text-sm font-bold mb-0.5 flex items-center gap-1.5">Mapa de calor — desvio planejado vs realizado por mês<HelpHint text="Matriz grupo × mês. Cada célula mostra o desvio percentual entre o realizado e o planejado no período. Vermelho = realizado acima do plano (estouro); verde = abaixo do plano (economia); intensidade proporcional ao desvio. Útil para detectar padrões sazonais ou grupos recorrentemente fora do orçamento." /></h2>
                 <p className="text-[0.7rem] text-muted-foreground mb-3">
                   Intensidade da cor = magnitude do desvio · <span className="text-red-500 font-medium">vermelho = acima do plano</span> · <span className="text-emerald-600 font-medium">verde = abaixo</span>
                 </p>
@@ -1079,7 +1082,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
               <Card className="p-5 animate-fade-in-up" style={{ animationDelay: '340ms' }}>
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <h2 className="text-sm font-bold">Curva ABC — Concentração de gastos por grupo</h2>
+                    <h2 className="text-sm font-bold flex items-center gap-1.5">Curva ABC — Concentração de gastos por grupo<HelpHint text="Classificação de Pareto aplicada ao realizado do período. Os grupos são ordenados por valor decrescente e a curva cumulativa identifica a classe A (até ~80% do gasto), B (próximos ~15%) e C (~5% restantes). Ajuda a priorizar os grupos que mais pesam no orçamento." /></h2>
                     <p className="text-[0.7rem] text-muted-foreground mt-0.5">
                       Classificação de Pareto · <span className="text-indigo-500 font-medium">A = ~80% do gasto</span> · <span className="text-amber-500 font-medium">B = ~15%</span> · <span className="text-slate-400 font-medium">C = ~5%</span>
                     </p>
@@ -1256,6 +1259,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                   <h2 className="text-sm font-bold flex items-center gap-2">
                     Ranking — Variação acumulada por unidade × grupo
                     {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                    <HelpHint text="Top combinações de unidade + grupo com maior desvio acumulado no período. Barras positivas (vermelho) = estouro vs. plano; negativas (verde) = economia. Soma do realizado − planejado para o mesmo escopo da tabela e do mapa de calor acima." />
                   </h2>
                   <p className="text-[0.7rem] text-muted-foreground mt-0.5">
                     Quais combinações de unidade + grupo acumularam mais desvio no período?
@@ -1518,6 +1522,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                   <h2 className="text-sm font-bold mb-0.5 flex items-center gap-2">
                     Desvio por Categoria · Período Selecionado
                     {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                    <HelpHint text="Diferença (realizado − planejado) por grupo de despesa para o período filtrado. Barras vermelhas = acima do orçamento; verdes = abaixo. Útil para isolar em quais categorias houve maior estouro ou economia dentro da janela selecionada." />
                   </h2>
                   <p className="text-xs text-muted-foreground mb-2">Diferença entre realizado e planejado por grupo de despesa</p>
                   {(() => {
@@ -1682,6 +1687,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
                     Planejado vs Realizado por Categoria
                     {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                    <HelpHint text="Pares de barras por grupo: planejado (valor orçado) vs. realizado (pago) no período. Mesmos filtros de unidade/categoria aplicados ao restante do painel. Permite comparar se o gasto efetivo superou, igualou ou ficou abaixo do plano para cada grupo." />
                   </CardTitle>
                   <CardDescription className="text-xs">
                     Comparativo de valores planejados e realizados por grupo de despesa · Período Selecionado
@@ -1753,7 +1759,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
             }
             case 'categorias': return (
             <Card className="p-4 relative overflow-hidden animate-fade-in-up" style={{ animationDelay: '350ms' }}>
-              <h2 className="text-sm font-bold mb-3">Gastos por Categoria · Período Selecionado</h2>
+              <h2 className="text-sm font-bold mb-3 flex items-center gap-1.5">Gastos por Categoria · Período Selecionado<HelpHint text="Ranking horizontal do gasto realizado por categoria/grupo contábil no período. Soma ValorPago (ou ValorParcela, quando não houver pagamento) respeitando todos os filtros ativos (unidade, categoria, situação, data)." /></h2>
               <div style={{ height: Math.max(300, categoryDataArray.length * 32) }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryDataArray} layout="vertical" margin={{ top: 10, right: 140, left: 220, bottom: 5 }}>
@@ -1773,7 +1779,10 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
             case 'detalhamento': return (
           <Card className="overflow-hidden animate-fade-in-up" style={{ animationDelay: '400ms' }}>
             <div className="flex justify-between items-center px-4 py-2.5 border-b border-border/50">
-              <h2 className="text-sm font-bold">Detalhamento · Período Selecionado</h2>
+              <div className="flex items-center gap-1.5">
+                <h2 className="text-sm font-bold">Detalhamento · Período Selecionado</h2>
+                <HelpHint text="Lista paginada de todas as parcelas do CP que correspondem aos filtros ativos. Status por cor: verde = pago; vermelho = vencido e em aberto; âmbar = a pagar no futuro. A coluna Valor exibe ValorPago quando existir, caindo para ValorParcela caso contrário." />
+              </div>
               <Badge variant="secondary" className="text-primary bg-primary/10 border-primary/15 text-xs">{filteredData.length} registros</Badge>
             </div>
             <Table>

@@ -7,6 +7,7 @@ import {
   AlertCircle, DollarSign, CalendarDays, Filter, RefreshCw, TrendingUp, Hash,
   Wifi, ChevronDown, Clock, AlertTriangle,
 } from 'lucide-react';
+import { HelpHint } from '@/components/HelpHint';
 import type { Unidade, ParcelaReceber } from '../types';
 import { ContasReceberAPI } from '../api/contasReceber';
 import { PlanoContasAPI } from '../api/planoContas';
@@ -542,6 +543,7 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
           <div>
             <h2 className="text-sm font-bold flex items-center gap-1.5">
               <TrendingUp size={14} style={{ color: accentColor }} /> Evolução mensal — {new Date().getFullYear()}
+              <HelpHint text="Comparativo mês a mês do ano corrente. Barras verdes (Recebido) somam parcelas efetivamente pagas no mês — usa DataPagamento e ValorPago (ou ValorParcela se não houver). Barras âmbar (A Receber) somam parcelas em aberto pelo mês de vencimento. Respeita os filtros de situação, categoria e unidade aplicados acima." />
             </h2>
             <p className="text-[0.7rem] text-muted-foreground mt-0.5">
               <span className="text-emerald-600 font-medium">Recebido</span> usa DataPagamento · <span className="text-amber-600 font-medium">A receber</span> usa Vencimento
@@ -582,8 +584,9 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
       {categoryDataArray.length > 0 && (
         <Card className="p-4 mb-4 animate-fade-in-up">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h2 className="text-sm font-bold">
+            <h2 className="text-sm font-bold flex items-center gap-1.5">
               Receitas por {rankingMode === 'grupo' ? 'Grupo' : 'Categoria'} · Período Selecionado
+              <HelpHint text="Ranking horizontal das receitas agrupadas por categoria (ou grupo contábil, quando disponível). Soma apenas parcelas que casam com os filtros ativos e com o período selecionado. Quando há grupos cadastrados no plano de contas, o toggle Categoria/Grupo permite alternar a granularidade da agregação." />
             </h2>
             {hasGruposReceita && (
               <div className="inline-flex rounded-lg border border-border bg-card/75 p-0.5 text-xs">
@@ -651,7 +654,10 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
       {/* ── Detalhamento ── */}
       <Card className="overflow-hidden animate-fade-in-up">
         <div className="flex justify-between items-center px-4 py-2.5 border-b border-border/50">
-          <h2 className="text-sm font-bold">Detalhamento · Período Selecionado</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-sm font-bold">Detalhamento · Período Selecionado</h2>
+            <HelpHint text="Lista paginada de todas as parcelas do CR que correspondem aos filtros ativos (período, situação, categoria, unidade). Status por cor: verde = parcela já recebida; vermelho = vencida e ainda em aberto; âmbar = a receber no futuro. A coluna Valor usa ValorPago quando existir e cai para ValorParcela caso contrário." />
+          </div>
           <Badge variant="secondary" className="text-primary bg-primary/10 border-primary/15 text-xs">
             {filteredData.length} registros
           </Badge>

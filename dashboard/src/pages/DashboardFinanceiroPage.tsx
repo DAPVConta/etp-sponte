@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { HelpHint } from '@/components/HelpHint';
 
 // ── Tipos internos ───────────────────────────────────────────────────────────
 interface LinhaCP {
@@ -133,19 +134,6 @@ async function fetchRange<T>(table: string, unidadeIds: string[], startStr: stri
   return all;
 }
 
-// ── Help Hint ───────────────────────────────────────────────────────────────
-// Icone de ajuda com tooltip nativo explicando a metrica
-function HelpHint({ text }: { text: string }) {
-  return (
-    <span
-      title={text}
-      aria-label={text}
-      className="inline-flex items-center text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-help flex-shrink-0"
-    >
-      <Info size={13} />
-    </span>
-  );
-}
 
 // ── Componente ───────────────────────────────────────────────────────────────
 export default function DashboardFinanceiroPage({ activeUnidade, unidades, accentColor }: Props) {
@@ -907,9 +895,9 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold flex items-center gap-1.5">
             Fluxo de Caixa — últimos 12 meses
-            <HelpHint text="Barras verdes = receita recebida (CR quitado) no mês. Barras vermelhas = despesa paga (CP quitado) no mês, apresentadas abaixo do eixo para contraste. Linha = saldo acumulado ao longo do período (soma de receita − despesa mês a mês, começando em zero no 1º mês exibido). Todos os valores usam a data de pagamento, não de vencimento." />
+            <HelpHint text="Barras verdes = receita recebida (CR quitado) no mês. Barras vermelhas = despesa paga (CP quitado) no mês, apresentadas abaixo do eixo para contraste. Linha = resultado do mês (receita − despesa), positivo quando sobrou caixa e negativo quando foi déficit. Todos os valores usam a data de pagamento, não de vencimento." />
           </h2>
-          <p className="text-xs text-muted-foreground">Receita × Despesa + saldo acumulado</p>
+          <p className="text-xs text-muted-foreground">Receita × Despesa + resultado do mês</p>
         </div>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
@@ -921,8 +909,35 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="receita"  name="Receita"  stackId="f" fill="#10b981" radius={[4, 4, 0, 0]} />
               <Bar dataKey="despesa"  name="Despesa"  stackId="f" fill="#ef4444" radius={[4, 4, 0, 0]} />
-              <Line type="monotone" dataKey="acumulado" name="Saldo acumulado" stroke={accentColor} strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="saldo" name="Resultado do mês" stroke={accentColor} strokeWidth={2} dot={{ r: 3 }} />
             </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      {/* Gráfico 2a — Resultado Acumulado 12m */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            Resultado acumulado — últimos 12 meses
+            <HelpHint text="Cada barra mostra a soma acumulada dos resultados mensais (receita − despesa) desde o primeiro mês exibido até aquele mês. Verde = acumulado positivo (sobra de caixa no período); vermelho = acumulado negativo (déficit no período). Base em data de pagamento, mesmos critérios do Fluxo de Caixa acima." />
+          </h2>
+          <p className="text-xs text-muted-foreground">Soma corrente dos resultados mensais</p>
+        </div>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={fluxo12m} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={fmtCompact} tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: number) => `R$ ${fmtBRL(v)}`} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="acumulado" name="Resultado acumulado" radius={[4, 4, 0, 0]}>
+                {fluxo12m.map((d, i) => (
+                  <Cell key={i} fill={d.acumulado >= 0 ? '#10b981' : '#ef4444'} />
+                ))}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </Card>
