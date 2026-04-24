@@ -12,6 +12,7 @@ import { supabase } from '../lib/supabase';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 // ── Tipos internos ───────────────────────────────────────────────────────────
 interface LinhaCP {
@@ -419,6 +420,125 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
       .sort((a, b) => b.resultado - a.resultado);
   }, [cp, cr, unidades, mesAtualKey]);
 
+  // Top 20 Inadimplentes CR — agrupa por sacado (ou aluno_id)
+  const topInadimplentes = useMemo(() => {
+    const hoje = hojeZero();
+    const porSacado: Record<string, {
+      sacado: string;
+      unidade: string;
+      valor: number;
+      parcelas: number;
+      maxDias: number;
+    }> = {};
+
+    for (const r of cr) {
+      if (isRecebidaCR(r) || isCancelada(r) || !r.vencimento) continue;
+      const venc = new Date(`${r.vencimento}T00:00:00`);
+      if (venc >= hoje) continue;
+      const dias = Math.floor((hoje.getTime() - venc.getTime()) / 86400000);
+      const chave = r.aluno_id != null ? `a:${r.aluno_id}` : `s:${r.sacado || 'Sem sacado'}`;
+      const unidade = unidades.find(u => u.id === r.unidade_id)?.nome || '—';
+
+      if (!porSacado[chave]) {
+        porSacado[chave] = {
+          sacado: r.sacado || (r.aluno_id != null ? `Aluno ${r.aluno_id}` : 'Sem sacado'),
+          unidade,
+          valor: 0,
+          parcelas: 0,
+          maxDias: 0,
+        };
+      }
+      porSacado[chave].valor    += r.valor_parcela;
+      porSacado[chave].parcelas += 1;
+      if (dias > porSacado[chave].maxDias) porSacado[chave].maxDias = dias;
+    }
+
+    return Object.values(porSacado)
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 20);
+  }, [cr, unidades]);
+
+  // Top 20 compromissos CP a vencer nos próximos 30 dias
+  const topCompromissosCP = useMemo(() => {
+    const hoje = hojeZero();
+    const limite = new Date(hoje); limite.setDate(limite.getDate() + 30);
+
+    return cp
+      .filter(r => {
+        if (isPagaCP(r) || isCancelada(r) || !r.vencimento) return false;
+        const v = new Date(`${r.vencimento}T00:00:00`);
+        return v >= hoje && v <= limite;
+      })
+      .map(r => ({
+        sacado:    r.sacado || 'Sem fornecedor',
+        categoria: r.categoria || '—',
+        unidade:   unidades.find(u => u.id === r.unidade_id)?.nome || '—',
+        vencimento: r.vencimento!,
+        valor: r.valor_parcela,
+      }))
+      .sort((a, b) => a.vencimento.localeCompare(b.vencimento))
+      .slice(0, 20);
+  }, [cp, unidades]);
+
+  // Margem por unidade × mês (últimos 6 meses) — heatmap
+  const margemMatriz = useMemo(() => {
+    const base = hojeZero();
+    const meses: { key: string; label: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+      meses.push({ key: ym(d), label: `${MONTH_NAMES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}` });
+    }
+
+    // { uid: { mesKey: { receita, despesa } } }
+    const dados: Record<string, Record<string, { receita: number; despesa: number }>> = {};
+    for (const u of unidades) {
+      dados[u.id] = {};
+      meses.forEach(m => { dados[u.id][m.key] = { receita: 0, despesa: 0 }; });
+    }
+
+    for (const r of cr) {
+      if (!isRecebidaCR(r) || !r.data_pagamento) continue;
+      const k = ym(r.data_pagamento);
+      if (dados[r.unidade_id]?.[k]) dados[r.unidade_id][k].receita += valorRealizado(r);
+    }
+    for (const r of cp) {
+      if (!isPagaCP(r) || !r.data_pagamento) continue;
+      const k = ym(r.data_pagamento);
+      if (dados[r.unidade_id]?.[k]) dados[r.unidade_id][k].despesa += valorRealizado(r);
+    }
+
+    const linhas = unidades
+      .map(u => ({
+        nome: u.nome,
+        celulas: meses.map(m => {
+          const { receita, despesa } = dados[u.id][m.key];
+          const resultado = receita - despesa;
+          const margem = receita > 0 ? (resultado / receita) * 100 : null;
+          return { mesKey: m.key, receita, despesa, resultado, margem };
+        }),
+      }))
+      .filter(l => l.celulas.some(c => c.receita > 0 || c.despesa > 0));
+
+    return { meses, linhas };
+  }, [cp, cr, unidades]);
+
+  // Cor por % margem (heatmap)
+  const margemBg = (m: number | null): string => {
+    if (m == null) return 'transparent';
+    if (m >= 30) return 'rgba(16, 185, 129, 0.30)';   // emerald forte
+    if (m >= 15) return 'rgba(16, 185, 129, 0.18)';
+    if (m >= 5)  return 'rgba(16, 185, 129, 0.08)';
+    if (m >= 0)  return 'rgba(148, 163, 184, 0.10)';  // neutro
+    if (m >= -10) return 'rgba(239, 68, 68, 0.12)';
+    if (m >= -25) return 'rgba(239, 68, 68, 0.25)';
+    return 'rgba(239, 68, 68, 0.40)';                  // vermelho forte
+  };
+
+  const fmtDatePtBR = (iso: string) => {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  };
+
   const sub = activeUnidade?.nome || `${unidades.length} unidade${unidades.length !== 1 ? 's' : ''}`;
 
   return (
@@ -598,6 +718,138 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
           </div>
         </Card>
       </div>
+
+      {/* Tabela 1 — Top 20 Inadimplentes CR */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Top 20 Inadimplentes — Contas a Receber</h2>
+          <p className="text-xs text-muted-foreground">Vencido e não recebido</p>
+        </div>
+        {topInadimplentes.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-6 text-center">Sem inadimplência no momento.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 text-xs">#</TableHead>
+                  <TableHead className="text-xs">Sacado</TableHead>
+                  <TableHead className="text-xs">Unidade</TableHead>
+                  <TableHead className="text-xs text-center">Parcelas</TableHead>
+                  <TableHead className="text-xs text-center">Dias em atraso</TableHead>
+                  <TableHead className="text-xs text-right">Valor total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topInadimplentes.map((row, i) => (
+                  <TableRow key={`${row.sacado}-${i}`}>
+                    <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="text-xs font-medium">{row.sacado}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{row.unidade}</TableCell>
+                    <TableCell className="text-xs text-center">{row.parcelas}</TableCell>
+                    <TableCell className="text-xs text-center">
+                      <span className={cn(
+                        'px-1.5 py-0.5 rounded font-medium',
+                        row.maxDias > 60 ? 'bg-red-100 text-red-700' :
+                        row.maxDias > 30 ? 'bg-amber-100 text-amber-700' :
+                                            'bg-slate-100 text-slate-700'
+                      )}>
+                        {row.maxDias}d
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-xs text-right font-semibold tabular-nums">R$ {fmtBRL(row.valor)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
+
+      {/* Tabela 2 — Top 20 Compromissos CP próximos 30 dias */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Compromissos CP — próximos 30 dias</h2>
+          <p className="text-xs text-muted-foreground">Ordenado por vencimento</p>
+        </div>
+        {topCompromissosCP.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-6 text-center">Nenhum compromisso nos próximos 30 dias.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 text-xs">#</TableHead>
+                  <TableHead className="text-xs">Vencimento</TableHead>
+                  <TableHead className="text-xs">Fornecedor</TableHead>
+                  <TableHead className="text-xs">Categoria</TableHead>
+                  <TableHead className="text-xs">Unidade</TableHead>
+                  <TableHead className="text-xs text-right">Valor</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topCompromissosCP.map((row, i) => (
+                  <TableRow key={`${row.sacado}-${row.vencimento}-${i}`}>
+                    <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="text-xs tabular-nums">{fmtDatePtBR(row.vencimento)}</TableCell>
+                    <TableCell className="text-xs font-medium">{row.sacado}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{row.categoria}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{row.unidade}</TableCell>
+                    <TableCell className="text-xs text-right font-semibold tabular-nums">R$ {fmtBRL(row.valor)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
+
+      {/* Tabela 3 — Margem por unidade × mês (heatmap) */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Margem operacional por Unidade × Mês</h2>
+          <p className="text-xs text-muted-foreground">Últimos 6 meses — verde = positiva, vermelho = negativa</p>
+        </div>
+        {margemMatriz.linhas.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-6 text-center">Sem dados suficientes nos últimos 6 meses.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs sticky left-0 bg-background">Unidade</TableHead>
+                  {margemMatriz.meses.map(m => (
+                    <TableHead key={m.key} className="text-xs text-center min-w-[88px]">{m.label}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {margemMatriz.linhas.map(linha => (
+                  <TableRow key={linha.nome}>
+                    <TableCell className="text-xs font-medium sticky left-0 bg-background">{linha.nome}</TableCell>
+                    {linha.celulas.map(c => (
+                      <TableCell
+                        key={c.mesKey}
+                        className="text-xs text-center tabular-nums p-1"
+                        style={{ backgroundColor: margemBg(c.margem) }}
+                        title={`Receita R$ ${fmtBRL(c.receita)} · Despesa R$ ${fmtBRL(c.despesa)} · Resultado R$ ${fmtBRL(c.resultado)}`}
+                      >
+                        {c.margem == null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <span className={cn('font-medium', c.margem < 0 && 'text-rose-700')}>
+                            {c.margem.toFixed(1)}%
+                          </span>
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
 
       {loading && (
         <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
