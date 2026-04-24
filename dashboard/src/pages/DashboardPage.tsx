@@ -887,7 +887,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                             dot={{ r: 4, fill: planColor, stroke: '#ffffff', strokeWidth: 2 }}
                             activeDot={{ r: 6, fill: planColor, stroke: '#fff', strokeWidth: 2 }}
                             connectNulls={true} name="planejado">
-                            <LabelList dataKey="planejado" position="top"
+                            <LabelList dataKey="planejado" position="bottom" offset={10}
                               formatter={(v: unknown) => v != null && Number(v) > 0 ? fmtCompact(v) : ''}
                               fill={planColor} fontSize={10} fontWeight={700} />
                           </Line>
@@ -909,7 +909,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                                   <text
                                     key={`proj-lbl-${props.index}`}
                                     x={props.x as number}
-                                    y={(props.y as number) - 8}
+                                    y={(props.y as number) + 16}
                                     textAnchor="middle"
                                     fill={planColor}
                                     fontSize={10}
