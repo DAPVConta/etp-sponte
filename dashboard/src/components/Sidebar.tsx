@@ -49,15 +49,15 @@ interface AppSidebarProps {
 // ── Dados de navegação ───────────────────────────────────────────
 
 const cpSubItems = [
-  { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/lancamento-cp', label: 'Lançamentos', icon: Receipt },
-  { to: '/categorias', label: 'Categorias', icon: Tag },
+  { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard, color: '#34d399' },
+  { to: '/lancamento-cp', label: 'Lançamentos', icon: Receipt, color: '#fbbf24' },
+  { to: '/categorias', label: 'Categorias', icon: Tag, color: '#60a5fa' },
 ];
 
 const crSubItems = [
-  { to: '/dashboard-receitas', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/lancamento-cr', label: 'Lançamentos', icon: Receipt },
-  { to: '/categorias-receitas', label: 'Categorias', icon: Tag },
+  { to: '/dashboard-receitas', label: 'Dashboard', icon: LayoutDashboard, color: '#34d399' },
+  { to: '/lancamento-cr', label: 'Lançamentos', icon: Receipt, color: '#fbbf24' },
+  { to: '/categorias-receitas', label: 'Categorias', icon: Tag, color: '#60a5fa' },
 ];
 
 const cadastroItems = [
@@ -65,9 +65,9 @@ const cadastroItems = [
 ];
 
 const configSubItems = [
-  { to: '/configuracoes/layout', label: 'Layout', icon: Palette },
-  { to: '/configuracoes/graficos', label: 'Gráficos', icon: BarChart3 },
-  { to: '/configuracoes/sincronizar', label: 'Sincronizar', icon: RefreshCw },
+  { to: '/configuracoes/layout', label: 'Layout', icon: Palette, color: '#f472b6' },
+  { to: '/configuracoes/graficos', label: 'Gráficos', icon: BarChart3, color: '#a78bfa' },
+  { to: '/configuracoes/sincronizar', label: 'Sincronizar', icon: RefreshCw, color: '#22d3ee' },
 ];
 
 // ── Componente auxiliar: NavItem ──────────────────────────────────
@@ -148,8 +148,8 @@ export default function AppSidebar({
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <NavItem to="/planejamento" label="Planejamento" icon={Target} />
               <NavItem to="/dashboard-financeiro" label="Dashboard Financeiro" icon={LineChart} />
+              <NavItem to="/planejamento" label="Planejamento" icon={Target} />
 
               {/* Contas a Pagar */}
               <Collapsible.Root open={cpOpen || cpActive} onOpenChange={setCpOpen} className="group/collapsible">
@@ -172,18 +172,19 @@ export default function AppSidebar({
                     </SidebarMenuButton>
                   </Collapsible.Trigger>
                   <Collapsible.Content>
-                    <SidebarMenuSub className="border-l-0 mx-0 px-1">
-                      {cpSubItems.map(({ to, end, label, icon: Icon }) => (
+                    <SidebarMenuSub className="border-l-0 ml-4 mr-0 pl-2 pr-1">
+                      {cpSubItems.map(({ to, end, label, icon: Icon, color }) => (
                         <SidebarMenuSubItem key={to}>
                           <NavLink to={to} end={end}>
                             {({ isActive }) => (
                               <SidebarMenuSubButton
                                 asChild
+                                size="sm"
                                 isActive={isActive}
                                 className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
                               >
                                 <span className="flex items-center gap-2 w-full">
-                                  <Icon size={14} className="flex-shrink-0" />
+                                  <Icon size={13} className="flex-shrink-0" style={{ color }} />
                                   {label}
                                 </span>
                               </SidebarMenuSubButton>
@@ -217,18 +218,19 @@ export default function AppSidebar({
                     </SidebarMenuButton>
                   </Collapsible.Trigger>
                   <Collapsible.Content>
-                    <SidebarMenuSub className="border-l-0 mx-0 px-1">
-                      {crSubItems.map(({ to, label, icon: Icon }) => (
+                    <SidebarMenuSub className="border-l-0 ml-4 mr-0 pl-2 pr-1">
+                      {crSubItems.map(({ to, label, icon: Icon, color }) => (
                         <SidebarMenuSubItem key={to}>
                           <NavLink to={to}>
                             {({ isActive }) => (
                               <SidebarMenuSubButton
                                 asChild
+                                size="sm"
                                 isActive={isActive}
                                 className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
                               >
                                 <span className="flex items-center gap-2 w-full">
-                                  <Icon size={14} className="flex-shrink-0" />
+                                  <Icon size={13} className="flex-shrink-0" style={{ color }} />
                                   {label}
                                 </span>
                               </SidebarMenuSubButton>
@@ -305,18 +307,19 @@ export default function AppSidebar({
                     </Collapsible.Trigger>
 
                     <Collapsible.Content>
-                      <SidebarMenuSub className="border-l-0 mx-0 px-1">
-                        {configSubItems.map(({ to, label, icon: Icon }) => (
+                      <SidebarMenuSub className="border-l-0 ml-4 mr-0 pl-2 pr-1">
+                        {configSubItems.map(({ to, label, icon: Icon, color }) => (
                           <SidebarMenuSubItem key={to}>
                             <NavLink to={to}>
                               {({ isActive }) => (
                                 <SidebarMenuSubButton
                                   asChild
+                                  size="sm"
                                   isActive={isActive}
                                   className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
                                 >
                                   <span className="flex items-center gap-2 w-full">
-                                    <Icon size={14} className="flex-shrink-0" />
+                                    <Icon size={13} className="flex-shrink-0" style={{ color }} />
                                     {label}
                                   </span>
                                 </SidebarMenuSubButton>
