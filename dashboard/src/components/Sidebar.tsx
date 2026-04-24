@@ -7,6 +7,7 @@ import {
   Tag,
   Target,
   Receipt,
+  DollarSign,
   Settings,
   Palette,
   BarChart3,
@@ -48,7 +49,8 @@ interface AppSidebarProps {
 
 const cadastroItems = [
   { to: '/unidades', label: 'Unidades', icon: Building2 },
-  { to: '/categorias', label: 'Categorias', icon: Tag },
+  { to: '/categorias', label: 'Categorias Despesas', icon: Tag },
+  { to: '/categorias-receitas', label: 'Categorias Receitas', icon: Tag },
 ];
 
 const configSubItems = [
@@ -101,7 +103,7 @@ export default function AppSidebar({
   const { user, signOut, isAdmin } = useAuth();
 
   const configOpen = location.pathname.startsWith('/configuracoes');
-  const cadastroActive = ['/unidades', '/categorias'].some(p => location.pathname.startsWith(p));
+  const cadastroActive = ['/unidades', '/categorias', '/categorias-receitas'].some(p => location.pathname.startsWith(p));
   const logoSrc = user?.empresaLogoUrl ?? layout.logoUrl ?? '/etp-logo.png';
 
   const [cadastroOpen, setCadastroOpen] = useState(true);
@@ -131,9 +133,11 @@ export default function AppSidebar({
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <NavItem to="/" end label="Dashboard" icon={LayoutDashboard} />
+              <NavItem to="/" end label="Dashboard CP" icon={LayoutDashboard} />
+              <NavItem to="/dashboard-receitas" label="Dashboard CR" icon={LayoutDashboard} />
               <NavItem to="/planejamento" label="Planejamento" icon={Target} />
               <NavItem to="/lancamento-cp" label="Lançamento CP" icon={Receipt} />
+              <NavItem to="/lancamento-cr" label="Lançamento CR" icon={DollarSign} />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export type TipoPlano = 'grupo' | 'sub_grupo' | 'despesa';
+export type TipoPlano = 'grupo' | 'sub_grupo' | 'despesa' | 'receita';
 
 export interface PlanoContasItem {
   id: string;

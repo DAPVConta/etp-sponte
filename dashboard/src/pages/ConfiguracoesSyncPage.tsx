@@ -10,8 +10,11 @@ import { SyncDiasAPI, type SyncDia } from '@/api/syncDias';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Unidade, ParcelaPagar } from '@/types';
+import type { Unidade, ParcelaPagar, ParcelaReceber } from '@/types';
 import ImportarCaixaModal from '@/components/ImportarCaixaModal';
+import { parseParcelasReceberXML } from '@/lib/sponteXmlParser';
+
+type SyncType = 'cp' | 'cr';
 
 // ── XML Parser (mesmo do DashboardPage) ─────────────────────────
 const PARCELA_FIELDS = [
@@ -91,6 +94,20 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
   const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
   const unitBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Seleção dos tipos financeiros a sincronizar
+  const [syncTypes, setSyncTypes] = useState<Set<SyncType>>(new Set<SyncType>(['cp', 'cr']));
+  const toggleSyncType = (t: SyncType) => {
+    setSyncTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(t)) {
+        if (next.size > 1) next.delete(t); // impede desmarcar ambos
+      } else {
+        next.add(t);
+      }
+      return next;
+    });
+  };
+
   // Período por data completa (dia/mês/ano)
   const today = new Date();
   const defaultStart = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-01`;
@@ -142,14 +159,17 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
 
       const dias: SyncDia[] = await SyncDiasAPI.listar(ids, inicioAno, fimAno);
 
-      // Agrupar por unidade → mês
+      // Agrupar por unidade → mês. Dedupe dias por (unidade, data), pois
+      // cada dia pode aparecer 2x (tipo=cp e tipo=cr) apos PR1b.
       const map: Record<string, Record<string, SyncMapEntry>> = {};
+      const seenDays: Record<string, Set<string>> = {};
       for (const u of unidades) map[u.id] = {};
 
       for (const d of dias) {
         const dt = new Date(d.data + 'T12:00:00');
         if (isNaN(dt.getTime())) continue;
         const mesKey = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
+        const seenKey = `${d.unidade_id}|${mesKey}`;
 
         if (!map[d.unidade_id]) map[d.unidade_id] = {};
         if (!map[d.unidade_id][mesKey]) {
@@ -157,7 +177,11 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
           map[d.unidade_id][mesKey] = { distinctDays: 0, totalDays: total, status: 'none', records: 0 };
         }
 
-        map[d.unidade_id][mesKey].distinctDays++;
+        if (!seenDays[seenKey]) seenDays[seenKey] = new Set();
+        if (!seenDays[seenKey].has(d.data)) {
+          seenDays[seenKey].add(d.data);
+          map[d.unidade_id][mesKey].distinctDays++;
+        }
         map[d.unidade_id][mesKey].records += d.registros;
       }
 
@@ -204,6 +228,8 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
     cancelRef.current = false;
 
     const units = unidades.filter(u => selectedUnits.has(u.id));
+    const syncCP = syncTypes.has('cp');
+    const syncCR = syncTypes.has('cr');
     let totalSynced = 0;
 
     try {
@@ -212,28 +238,50 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
         const u = units[ui];
         const codigoCliente = u.codigoSponte || '35695';
         const token = u.tokenSponte || 'fxW1Et2vS8Vf';
+        const curYear = new Date().getFullYear();
 
-        // 1. Pendentes (sempre busca amplo para não perder contas em aberto)
-        setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Buscando contas pendentes...`);
-        try {
-          const curYear = new Date().getFullYear();
-          const pendentesRes = await axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
-            params: {
-              nCodigoCliente: codigoCliente,
-              sToken: token,
-              sParametrosBusca: `Situacao=A Pagar&DataInicial=01/01/${curYear - 1}&DataFinal=31/12/${curYear + 1}`,
-            },
-            timeout: 30000,
-          });
-          const pendentes = parseSponteXML(pendentesRes.data);
-          if (pendentes.length > 0) {
-            setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Salvando ${pendentes.length} pendentes...`);
-            await SyncAPI.syncContasPagar(u.id, pendentes);
-            totalSynced += pendentes.length;
-          }
-        } catch { /* continua para pagas */ }
+        // ── 1. Pendentes (busca amplo para não perder contas em aberto) ──
+        if (syncCP) {
+          setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Buscando contas a pagar pendentes...`);
+          try {
+            const pendentesRes = await axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
+              params: {
+                nCodigoCliente: codigoCliente,
+                sToken: token,
+                sParametrosBusca: `Situacao=A Pagar&DataInicial=01/01/${curYear - 1}&DataFinal=31/12/${curYear + 1}`,
+              },
+              timeout: 30000,
+            });
+            const pendentes = parseSponteXML(pendentesRes.data);
+            if (pendentes.length > 0) {
+              setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Salvando ${pendentes.length} contas a pagar pendentes...`);
+              await SyncAPI.syncContasPagar(u.id, pendentes);
+              totalSynced += pendentes.length;
+            }
+          } catch { /* continua */ }
+        }
 
-        // 2. Pagas dia a dia no período selecionado
+        if (syncCR) {
+          setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Buscando mensalidades a receber...`);
+          try {
+            const pendentesRes = await axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelas', {
+              params: {
+                nCodigoCliente: codigoCliente,
+                sToken: token,
+                sParametrosBusca: `Situacao=A Receber&DataInicial=01/01/${curYear - 1}&DataFinal=31/12/${curYear + 1}`,
+              },
+              timeout: 30000,
+            });
+            const pendentes = parseParcelasReceberXML(pendentesRes.data);
+            if (pendentes.length > 0) {
+              setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: Salvando ${pendentes.length} mensalidades a receber...`);
+              await SyncAPI.syncContasReceber(u.id, pendentes);
+              totalSynced += pendentes.length;
+            }
+          } catch { /* continua */ }
+        }
+
+        // ── 2. Pagas/Recebidas dia a dia no período selecionado ──
         const datas = getDatesInRangePtBR(dataInicio, dataFim);
         const BATCH = 5;
 
@@ -244,44 +292,85 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
             `[${ui + 1}/${units.length}] ${u.nome}: Sincronizando dias ${Math.min(i + BATCH, datas.length)} de ${datas.length}...`
           );
 
-          const batchResults = await Promise.all(
-            batch.map(data =>
-              axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
-                params: {
-                  nCodigoCliente: codigoCliente,
-                  sToken: token,
-                  sParametrosBusca: `DataPagamento=${data}`,
-                },
-                timeout: 20000,
-              })
-                .then(r =>
-                  parseSponteXML(r.data).filter(
-                    p => p.SituacaoParcela && p.SituacaoParcela !== 'Pendente'
+          // Para cada dia, dispara em paralelo as requisições dos tipos selecionados
+          const cpBatch = syncCP
+            ? await Promise.all(batch.map(data =>
+                axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelasPagar', {
+                  params: {
+                    nCodigoCliente: codigoCliente,
+                    sToken: token,
+                    sParametrosBusca: `DataPagamento=${data}`,
+                  },
+                  timeout: 20000,
+                })
+                  .then(r =>
+                    parseSponteXML(r.data).filter(
+                      p => p.SituacaoParcela && p.SituacaoParcela !== 'Pendente'
+                    )
                   )
-                )
-                .catch(() => [] as ParcelaPagar[])
-            )
-          );
+                  .catch(() => [] as ParcelaPagar[])
+              ))
+            : batch.map(() => [] as ParcelaPagar[]);
 
-          // Salvar contas no banco
-          const pagasNoLote = batchResults.flat();
-          if (pagasNoLote.length > 0) {
-            await SyncAPI.syncContasPagar(u.id, pagasNoLote);
-            totalSynced += pagasNoLote.length;
+          const crBatch = syncCR
+            ? await Promise.all(batch.map(data =>
+                axios.get('/api-sponte/WSAPIEdu.asmx/GetParcelas', {
+                  params: {
+                    nCodigoCliente: codigoCliente,
+                    sToken: token,
+                    sParametrosBusca: `DataPagamento=${data}`,
+                  },
+                  timeout: 20000,
+                })
+                  .then(r =>
+                    parseParcelasReceberXML(r.data).filter(
+                      p => p.SituacaoParcela && p.SituacaoParcela !== 'A Receber'
+                    )
+                  )
+                  .catch(() => [] as ParcelaReceber[])
+              ))
+            : batch.map(() => [] as ParcelaReceber[]);
+
+          // Persiste em cada tabela
+          if (syncCP) {
+            const pagasNoLote = cpBatch.flat();
+            if (pagasNoLote.length > 0) {
+              await SyncAPI.syncContasPagar(u.id, pagasNoLote);
+              totalSynced += pagasNoLote.length;
+            }
+          }
+          if (syncCR) {
+            const recebidasNoLote = crBatch.flat();
+            if (recebidasNoLote.length > 0) {
+              await SyncAPI.syncContasReceber(u.id, recebidasNoLote);
+              totalSynced += recebidasNoLote.length;
+            }
           }
 
-          // Registrar cada dia sincronizado na tabela de controle
-          const diasParaRegistrar = batch.map((dataPtBR, idx) => ({
-            data: ptBRtoISO(dataPtBR),
-            registros: batchResults[idx].length,
-          }));
-          await SyncDiasAPI.registrarBatch(u.id, diasParaRegistrar);
+          // Registra cada dia sincronizado por tipo (linhas separadas em etp_sync_dias)
+          if (syncCP) {
+            const diasCP = batch.map((dataPtBR, idx) => ({
+              data: ptBRtoISO(dataPtBR),
+              registros: cpBatch[idx].length,
+            }));
+            await SyncDiasAPI.registrarBatch(u.id, diasCP, 'cp');
+          }
+          if (syncCR) {
+            const diasCR = batch.map((dataPtBR, idx) => ({
+              data: ptBRtoISO(dataPtBR),
+              registros: crBatch[idx].length,
+            }));
+            await SyncDiasAPI.registrarBatch(u.id, diasCR, 'cr');
+          }
         }
 
-        await SyncAPI.logSync(u.id, 'sincronizacao_config', 'sucesso', totalSynced);
+        // Logs separados por tipo para auditoria
+        if (syncCP) await SyncAPI.logSync(u.id, 'contas_pagar', 'sucesso', totalSynced);
+        if (syncCR) await SyncAPI.logSync(u.id, 'contas_receber', 'sucesso', totalSynced);
       }
 
-      setSyncSuccess(`Sincronização concluída! ${totalSynced} registros processados em ${units.length} unidade(s).`);
+      const tiposLabel = [syncCP && 'Contas a Pagar', syncCR && 'Contas a Receber'].filter(Boolean).join(' + ');
+      setSyncSuccess(`Sincronização concluída (${tiposLabel}). ${totalSynced} registros processados em ${units.length} unidade(s).`);
       await loadSyncMap();
     } catch (err: unknown) {
       const e = err as { response?: { status?: number }; message?: string };
@@ -293,7 +382,7 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
       setSyncing(false);
       setSyncProgress('');
     }
-  }, [selectedUnits, unidades, dataInicio, dataFim, loadSyncMap]);
+  }, [selectedUnits, syncTypes, unidades, dataInicio, dataFim, loadSyncMap]);
 
   // ── Render ────────────────────────────────────────────────────
   return (
@@ -407,10 +496,41 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
               />
             </div>
 
+            {/* Tipos a sincronizar (CP / CR) */}
+            <div className="min-w-[220px]">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
+                Tipos
+              </label>
+              <div className="flex gap-1.5 bg-background border border-border rounded-lg p-1">
+                {([
+                  { key: 'cp' as SyncType, label: 'Contas a Pagar' },
+                  { key: 'cr' as SyncType, label: 'Contas a Receber' },
+                ]).map(({ key, label }) => {
+                  const active = syncTypes.has(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleSyncType(key)}
+                      disabled={syncing}
+                      className={cn(
+                        'flex-1 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50',
+                        active ? 'text-white shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      )}
+                      style={active ? { background: accentColor } : {}}
+                      title={`${active ? 'Remover' : 'Incluir'} ${label} da sincronização`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Botão */}
             <Button
               onClick={handleSync}
-              disabled={syncing || selectedUnits.size === 0}
+              disabled={syncing || selectedUnits.size === 0 || syncTypes.size === 0}
               className="gap-2 font-semibold h-10 px-5"
               style={{ background: accentColor, boxShadow: `0 4px 14px -4px ${accentColor}66` }}
             >

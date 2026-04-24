@@ -347,7 +347,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
           const [dd, mm, yyyy] = dataPtBR.split('/');
           return { data: `${yyyy}-${mm}-${dd}`, registros: batchResults[idx].length };
         });
-        await SyncDiasAPI.registrarBatch(unitId, diasParaRegistrar);
+        await SyncDiasAPI.registrarBatch(unitId, diasParaRegistrar, 'cp');
       }
       setLastSync(new Date());
       await SyncAPI.logSync(unitId, 'sincronizacao_painel', 'sucesso', pendentes.length);

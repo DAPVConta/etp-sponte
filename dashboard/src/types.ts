@@ -81,3 +81,31 @@ export interface ParcelaPagar {
   ValorPago: number;
   RetornoOperacao: string;
 }
+
+// Categorias de receitas (GetCategorias do Sponte — mesmo schema das despesas)
+export interface CategoriaReceita {
+  categoriaID: number;
+  nome: string;
+}
+
+// Parcelas a receber (GetParcelas do Sponte — wsParcela)
+export interface ParcelaReceber {
+  ContaReceberID: string;
+  NumeroParcela: string;
+  Sacado: string;
+  SituacaoParcela: string;
+  SituacaoCNAB: string;
+  Vencimento: string;
+  ValorParcela: number;
+  Categoria: string;
+  ContaID: string;
+  AlunoID: string;
+  FaturaID: string;
+  NumeroBoleto: string;
+  TipoRecebimento: string;
+  FormaCobranca: string;
+  BolsaAssociada: string;
+  DataPagamento: string;
+  ValorPago: number;
+  RetornoOperacao: string;
+}

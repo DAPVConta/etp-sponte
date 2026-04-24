@@ -6,10 +6,13 @@ import AppSidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import SuperAdminSidebar from './components/SuperAdminSidebar';
 import DashboardPage from './pages/DashboardPage';
+import DashboardReceitasPage from './pages/DashboardReceitasPage';
 import UnidadesPage from './pages/UnidadesPage';
 import CategoriasPage from './pages/CategoriasPage';
+import CategoriasReceitasPage from './pages/CategoriasReceitasPage';
 import PlanejamentoPage from './pages/PlanejamentoPage';
 import LancamentoCPPage from './pages/LancamentoCPPage';
+import LancamentoCRPage from './pages/LancamentoCRPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import ConfiguracoesGraficosPage from './pages/ConfiguracoesGraficosPage';
 import ConfiguracoesSyncPage from './pages/ConfiguracoesSyncPage';
@@ -132,6 +135,11 @@ function AppShell() {
                     <DashboardPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
+                <Route path="/dashboard-receitas" element={
+                  <ProtectedRoute minRole="viewer">
+                    <DashboardReceitasPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
+                  </ProtectedRoute>
+                } />
                 <Route path="/planejamento" element={
                   <ProtectedRoute minRole="viewer">
                     <PlanejamentoPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
@@ -142,9 +150,19 @@ function AppShell() {
                     <LancamentoCPPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
+                <Route path="/lancamento-cr" element={
+                  <ProtectedRoute minRole="viewer">
+                    <LancamentoCRPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                  </ProtectedRoute>
+                } />
                 <Route path="/categorias" element={
                   <ProtectedRoute minRole="viewer">
                     <CategoriasPage unidades={unidades} accentColor={accentColor} />
+                  </ProtectedRoute>
+                } />
+                <Route path="/categorias-receitas" element={
+                  <ProtectedRoute minRole="viewer">
+                    <CategoriasReceitasPage unidades={unidades} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
 
