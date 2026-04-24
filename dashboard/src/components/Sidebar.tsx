@@ -47,10 +47,20 @@ interface AppSidebarProps {
 
 // ── Dados de navegação ───────────────────────────────────────────
 
+const cpSubItems = [
+  { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/lancamento-cp', label: 'Lançamentos', icon: Receipt },
+  { to: '/categorias', label: 'Categorias', icon: Tag },
+];
+
+const crSubItems = [
+  { to: '/dashboard-receitas', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/lancamento-cr', label: 'Lançamentos', icon: Receipt },
+  { to: '/categorias-receitas', label: 'Categorias', icon: Tag },
+];
+
 const cadastroItems = [
   { to: '/unidades', label: 'Unidades', icon: Building2 },
-  { to: '/categorias', label: 'Categorias Despesas', icon: Tag },
-  { to: '/categorias-receitas', label: 'Categorias Receitas', icon: Tag },
 ];
 
 const configSubItems = [
@@ -103,11 +113,15 @@ export default function AppSidebar({
   const { user, signOut, isAdmin } = useAuth();
 
   const configOpen = location.pathname.startsWith('/configuracoes');
-  const cadastroActive = ['/unidades', '/categorias', '/categorias-receitas'].some(p => location.pathname.startsWith(p));
+  const cadastroActive = ['/unidades'].some(p => location.pathname.startsWith(p));
+  const cpActive = location.pathname === '/' || ['/lancamento-cp', '/categorias'].some(p => location.pathname.startsWith(p));
+  const crActive = ['/dashboard-receitas', '/lancamento-cr', '/categorias-receitas'].some(p => location.pathname.startsWith(p));
   const logoSrc = user?.empresaLogoUrl ?? layout.logoUrl ?? '/etp-logo.png';
 
   const [cadastroOpen, setCadastroOpen] = useState(true);
   const [configMenuOpen, setConfigMenuOpen] = useState(true);
+  const [cpOpen, setCpOpen] = useState(true);
+  const [crOpen, setCrOpen] = useState(true);
 
   return (
     <Sidebar collapsible="none" className="border-r-0">
@@ -129,15 +143,101 @@ export default function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent className="px-1">
-        {/* ── Dashboard + Planejamento ── */}
+        {/* ── Planejamento + Contas a Pagar + Contas a Receber ── */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <NavItem to="/" end label="Dashboard CP" icon={LayoutDashboard} />
-              <NavItem to="/dashboard-receitas" label="Dashboard CR" icon={LayoutDashboard} />
               <NavItem to="/planejamento" label="Planejamento" icon={Target} />
-              <NavItem to="/lancamento-cp" label="Lançamento CP" icon={Receipt} />
-              <NavItem to="/lancamento-cr" label="Lançamento CR" icon={DollarSign} />
+
+              {/* Contas a Pagar */}
+              <Collapsible.Root open={cpOpen || cpActive} onOpenChange={setCpOpen} className="group/collapsible">
+                <SidebarMenuItem>
+                  <Collapsible.Trigger asChild>
+                    <SidebarMenuButton
+                      isActive={cpActive}
+                      tooltip="Contas a Pagar"
+                      className={cn(
+                        'rounded-lg',
+                        cpActive && 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                      )}
+                    >
+                      <Receipt />
+                      <span>Contas a Pagar</span>
+                      <ChevronRight
+                        size={14}
+                        className="ml-auto flex-shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+                      />
+                    </SidebarMenuButton>
+                  </Collapsible.Trigger>
+                  <Collapsible.Content>
+                    <SidebarMenuSub>
+                      {cpSubItems.map(({ to, end, label, icon: Icon }) => (
+                        <SidebarMenuSubItem key={to}>
+                          <NavLink to={to} end={end}>
+                            {({ isActive }) => (
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={isActive}
+                                className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
+                              >
+                                <span className="flex items-center gap-2 w-full">
+                                  <Icon size={14} className="flex-shrink-0" />
+                                  {label}
+                                </span>
+                              </SidebarMenuSubButton>
+                            )}
+                          </NavLink>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </Collapsible.Content>
+                </SidebarMenuItem>
+              </Collapsible.Root>
+
+              {/* Contas a Receber */}
+              <Collapsible.Root open={crOpen || crActive} onOpenChange={setCrOpen} className="group/collapsible">
+                <SidebarMenuItem>
+                  <Collapsible.Trigger asChild>
+                    <SidebarMenuButton
+                      isActive={crActive}
+                      tooltip="Contas a Receber"
+                      className={cn(
+                        'rounded-lg',
+                        crActive && 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                      )}
+                    >
+                      <DollarSign />
+                      <span>Contas a Receber</span>
+                      <ChevronRight
+                        size={14}
+                        className="ml-auto flex-shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+                      />
+                    </SidebarMenuButton>
+                  </Collapsible.Trigger>
+                  <Collapsible.Content>
+                    <SidebarMenuSub>
+                      {crSubItems.map(({ to, label, icon: Icon }) => (
+                        <SidebarMenuSubItem key={to}>
+                          <NavLink to={to}>
+                            {({ isActive }) => (
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={isActive}
+                                className={cn(isActive && 'font-semibold text-sidebar-accent-foreground')}
+                              >
+                                <span className="flex items-center gap-2 w-full">
+                                  <Icon size={14} className="flex-shrink-0" />
+                                  {label}
+                                </span>
+                              </SidebarMenuSubButton>
+                            )}
+                          </NavLink>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </Collapsible.Content>
+                </SidebarMenuItem>
+              </Collapsible.Root>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
