@@ -210,6 +210,24 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
         }
       }
 
+      // Despesas orfas — grupo_nome nao casa com nenhum grupo existente (dados legados/mal cadastrados).
+      // Agrupa em "SEM GRUPO DEFINIDO" para que todos os valores fiquem visiveis.
+      const grupoNomesSet = new Set(grupoRows.map(g => g.nome));
+      const orphanDespesas = despesaRows.filter(d => !grupoNomesSet.has(d.grupoNome ?? ''));
+      if (orphanDespesas.length > 0) {
+        const orphanMedia = orphanDespesas.reduce((a, d) => a + getMedia(d.nome), 0);
+        const orphanKey = 'G::__SEM_GRUPO__';
+        novosValores.set(orphanKey, savedMap.get(orphanKey) ?? { valor: orphanMedia, obs: '' });
+        tree.push({
+          key: orphanKey,
+          label: 'SEM GRUPO DEFINIDO',
+          media: orphanMedia,
+          hasSubs: false,
+          subgrupos: [],
+          despesasDiretas: orphanDespesas.map(d => ({ nome: d.nome, media: getMedia(d.nome) })),
+        });
+      }
+
       // Iniciar tudo recolhido
       const allGrupoKeys   = new Set(tree.map(g => g.key));
       const allSubgrupoKeys = new Set(tree.flatMap(g => g.subgrupos.map(s => s.key)));
@@ -850,6 +868,8 @@ function MesDropdownPortal({ btnRef, meses, selecionados, mesAtual, accentColor,
 }
 
 // ── Custom Currency Input ─────────────────────────────────────────────────────
+// Mascara estilo "centavos": digitos preenchem da direita p/ esquerda,
+// virgula decimal sempre fixa. Ex: digitar "1234" -> "12,34".
 function MoedaInput({ valor, onChange, onEnter, inputRef }: {
   valor: number; onChange: (n: number) => void; onEnter: () => void;
   inputRef?: (el: HTMLInputElement | null) => void;
@@ -861,10 +881,18 @@ function MoedaInput({ valor, onChange, onEnter, inputRef }: {
     if (Math.abs(parseMoeda(str) - valor) > 0.001) setStr(fmtNum(valor));
   }, [valor]); // eslint-disable-line
 
-  const commit = () => {
-    const num = parseMoeda(str);
-    onChange(num);
-    setStr(fmtNum(num));
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = e.target.value.replace(/\D/g, '');
+    if (!digits) {
+      setStr(fmtNum(0));
+      onChange(0);
+      return;
+    }
+    // Limita a ate 13 digitos (bilhoes com centavos) p/ nao estourar precisao
+    const clamped = digits.slice(0, 13);
+    const n = parseInt(clamped, 10) / 100;
+    setStr(fmtNum(n));
+    onChange(n);
   };
 
   return (
@@ -873,11 +901,11 @@ function MoedaInput({ valor, onChange, onEnter, inputRef }: {
       <input
         ref={inputRef}
         type="text"
+        inputMode="numeric"
         className="bg-transparent border-none outline-none text-foreground font-semibold tabular-nums text-sm w-[110px] text-right"
         value={str}
-        onChange={e => setStr(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') { commit(); onEnter(); } }}
+        onChange={handleChange}
+        onKeyDown={e => { if (e.key === 'Enter') { onEnter(); } }}
         onFocus={e => e.target.select()}
       />
     </div>
