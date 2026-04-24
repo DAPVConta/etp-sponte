@@ -244,11 +244,11 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
   }, [selectedIds, mesesSelecionados, refMode]);
 
   // ── Edição ────────────────────────────────────────────────────────────────
-  const atualizarValor = useCallback((key: string, raw: string) => {
+  const atualizarValor = useCallback((key: string, n: number) => {
     setValores(prev => {
-      const n = new Map(prev);
-      n.set(key, { ...(n.get(key) ?? { valor: 0, obs: '' }), valor: parseMoeda(raw) });
-      return n;
+      const map = new Map(prev);
+      map.set(key, { ...(map.get(key) ?? { valor: 0, obs: '' }), valor: n });
+      return map;
     });
   }, []);
 
@@ -668,7 +668,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
                           <MoedaInput
                             valor={valores.get(grupo.key)?.valor ?? 0}
                             inputRef={el => { if (el) inputRefs.current.set(grupo.key, el); }}
-                            onChange={n => atualizarValor(grupo.key, String(n))}
+                            onChange={n => atualizarValor(grupo.key, n)}
                             onEnter={() => {}}
                           />
                         </TableCell>
