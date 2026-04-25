@@ -933,7 +933,7 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
                   dataKey="saldo"
                   position="top"
                   formatter={(v: number) => Math.round(v).toLocaleString('pt-BR')}
-                  style={{ fontSize: 10, fontWeight: 700, fill: '#93c5fd' }}
+                  style={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                 />
               </Line>
             </ComposedChart>
