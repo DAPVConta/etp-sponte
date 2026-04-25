@@ -912,9 +912,30 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
               <YAxis tickFormatter={fmtCompact} tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v: number) => `R$ ${fmtBRL(Math.abs(v))}`} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="receita"  name="Receita"  stackId="f" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="despesa"  name="Despesa"  stackId="f" fill="#ef4444" radius={[4, 4, 0, 0]} />
-              <Line type="monotone" dataKey="saldo" name="Resultado do mês" stroke={accentColor} strokeWidth={2} dot={{ r: 3 }} />
+              <Bar dataKey="receita"  name="Receita"  stackId="f" fill="#10b981" radius={[4, 4, 0, 0]}>
+                <LabelList
+                  dataKey="receita"
+                  position="center"
+                  formatter={(v: number) => v > 0 ? Math.round(v).toLocaleString('pt-BR') : ''}
+                  style={{ fontSize: 10, fontWeight: 700, fill: '#bbf7d0' }}
+                />
+              </Bar>
+              <Bar dataKey="despesa"  name="Despesa"  stackId="f" fill="#ef4444" radius={[4, 4, 0, 0]}>
+                <LabelList
+                  dataKey="despesa"
+                  position="center"
+                  formatter={(v: number) => v < 0 ? Math.round(Math.abs(v)).toLocaleString('pt-BR') : ''}
+                  style={{ fontSize: 10, fontWeight: 700, fill: '#fecaca' }}
+                />
+              </Bar>
+              <Line type="monotone" dataKey="saldo" name="Resultado do mês" stroke={accentColor} strokeWidth={2} dot={{ r: 3 }}>
+                <LabelList
+                  dataKey="saldo"
+                  position="top"
+                  formatter={(v: number) => Math.round(v).toLocaleString('pt-BR')}
+                  style={{ fontSize: 10, fontWeight: 700, fill: '#93c5fd' }}
+                />
+              </Line>
             </ComposedChart>
           </ResponsiveContainer>
         </div>
