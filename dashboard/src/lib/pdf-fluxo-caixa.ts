@@ -92,7 +92,24 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
   }
 
   const lines = groupByLine(allItems);
-  const textLines = lines.map(l => l.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
+  const rawLines = lines.map(l => l.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
+
+  // Em PDFs do Sponte, dois lançamentos podem ser agrupados na mesma linha (mesmo Y
+  // dentro da tolerância). Detectamos múltiplos pares "DD/MM/YYYY DD/MM/YYYY" numa
+  // mesma linha e quebramos em sublinhas — caso contrário a regex só casa o primeiro
+  // par e o resto vira lixo na categoria (ex.: "10/04/2026 09/03/2026 Taxa Pix...").
+  const ROW_START_RX = /\d{2}\/\d{2}\/\d{4}\s+\d{2}\/\d{2}\/\d{4}/g;
+  const textLines: string[] = [];
+  for (const t of rawLines) {
+    const matches = [...t.matchAll(ROW_START_RX)];
+    if (matches.length <= 1) { textLines.push(t); continue; }
+    if ((matches[0].index ?? 0) > 0) textLines.push(t.slice(0, matches[0].index).trim());
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].index ?? 0;
+      const end = i + 1 < matches.length ? (matches[i + 1].index ?? t.length) : t.length;
+      textLines.push(t.slice(start, end).trim());
+    }
+  }
 
   // Descobre nome da unidade — texto próximo ao topo, tipicamente "ETP - <algo>"
   let unidadeNome = '';
