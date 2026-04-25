@@ -178,6 +178,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
   const [heatTooltip, setHeatTooltip] = useState<{ x: number; y: number; unidade: string; mes: string; real: number; plan: number; desvio: number } | null>(null);
   const [tablePage, setTablePage] = useState(0);
   const [abcFilter, setAbcFilter] = useState<'Todas' | 'A' | 'B' | 'C'>('Todas');
+  const [rankingExpanded, setRankingExpanded] = useState<{ B: boolean; C: boolean }>({ B: false, C: false });
 
   // Fechar todos os dropdowns ao clicar fora da área de filtros
   useEffect(() => {
@@ -1371,30 +1372,59 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                           </tr>
                         </thead>
                         <tbody>
-                          {grupos.map((g, idx) => (
-                            <tr key={g.grupo} className={idx % 2 === 0 ? 'bg-muted/10' : ''}>
-                              <td className="text-left px-2 py-1.5 sticky left-0 font-medium text-foreground" style={{ background: idx % 2 === 0 ? 'rgba(120,120,120,0.05)' : 'var(--background, #fff)' }} title={`${g.grupo} (Classe ${g.classe} · ${g.pct.toFixed(1)}% do gasto de ${refUnidade.nome})`}>
-                                <span className="inline-flex items-center gap-2">
-                                  <span className="inline-block w-5 text-center px-1 py-0.5 rounded text-[0.6rem] font-bold text-white" style={{ background: classeCor[g.classe] }}>{g.classe}</span>
-                                  <span className="truncate max-w-[180px]">{g.grupo}</span>
-                                </span>
-                              </td>
-                              {unidades.map(u => {
-                                const cell = dadosPorUnidade[u.id]?.[g.grupo] ?? { plan: 0, real: 0 };
-                                const pct = cell.plan > 0 ? (cell.real / cell.plan) * 100 : null;
-                                const pctColor = pct === null ? '#94a3b8' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#059669';
-                                return (
-                                  <React.Fragment key={u.id}>
-                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30">{fmtK(cell.plan)}</td>
-                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold">{fmtK(cell.real)}</td>
-                                    <td className="text-right px-2 py-1.5 font-bold" style={{ color: pctColor }}>
-                                      {pct === null ? '—' : `${Math.round(pct)}%`}
-                                    </td>
-                                  </React.Fragment>
-                                );
-                              })}
-                            </tr>
-                          ))}
+                          {(['A', 'B', 'C'] as const).flatMap((classe) => {
+                            const itensClasse = grupos.filter(g => g.classe === classe);
+                            if (itensClasse.length === 0) return [];
+                            const collapsed = classe !== 'A' && !rankingExpanded[classe as 'B' | 'C'];
+                            const colSpanTotal = 1 + unidades.length * 3;
+
+                            // Linha de toggle para B e C
+                            const toggleRow = classe === 'A' ? null : (
+                              <tr key={`toggle-${classe}`} className="border-t border-border/40">
+                                <td colSpan={colSpanTotal} className="px-2 py-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setRankingExpanded(s => ({ ...s, [classe]: !s[classe as 'B' | 'C'] }))}
+                                    className="inline-flex items-center gap-2 text-[0.7rem] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                                  >
+                                    <span className="inline-block w-5 text-center px-1 py-0.5 rounded text-[0.6rem] font-bold text-white" style={{ background: classeCor[classe] }}>{classe}</span>
+                                    <span>Faixa {classe} · {itensClasse.length} grupo{itensClasse.length !== 1 ? 's' : ''} · {classe === 'B' ? '~15%' : '~5%'} do gasto</span>
+                                    <span className="text-[0.65rem] opacity-70">{collapsed ? '▸ expandir' : '▾ recolher'}</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+
+                            const rows = collapsed ? [] : itensClasse.map((g, idxLocal) => {
+                              const idx = grupos.indexOf(g);
+                              return (
+                                <tr key={g.grupo} className={idxLocal % 2 === 0 ? 'bg-muted/10' : ''}>
+                                  <td className="text-left px-2 py-1.5 sticky left-0 font-medium text-foreground" style={{ background: idxLocal % 2 === 0 ? 'rgba(120,120,120,0.05)' : 'var(--background, #fff)' }} title={`${g.grupo} (Classe ${g.classe} · ${g.pct.toFixed(1)}% do gasto de ${refUnidade.nome})`}>
+                                    <span className="inline-flex items-center gap-2">
+                                      <span className="inline-block w-5 text-center px-1 py-0.5 rounded text-[0.6rem] font-bold text-white" style={{ background: classeCor[g.classe] }}>{g.classe}</span>
+                                      <span className="truncate max-w-[180px]">{g.grupo}</span>
+                                    </span>
+                                  </td>
+                                  {unidades.map(u => {
+                                    const cell = dadosPorUnidade[u.id]?.[g.grupo] ?? { plan: 0, real: 0 };
+                                    const pct = cell.plan > 0 ? (cell.real / cell.plan) * 100 : null;
+                                    const pctColor = pct === null ? '#94a3b8' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#059669';
+                                    return (
+                                      <React.Fragment key={`${idx}-${u.id}`}>
+                                        <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30">{fmtK(cell.plan)}</td>
+                                        <td className="text-right px-2 py-1.5 text-foreground font-semibold">{fmtK(cell.real)}</td>
+                                        <td className="text-right px-2 py-1.5 font-bold" style={{ color: pctColor }}>
+                                          {pct === null ? '—' : `${Math.round(pct)}%`}
+                                        </td>
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            });
+
+                            return toggleRow ? [toggleRow, ...rows] : rows;
+                          })}
                         </tbody>
                       </table>
 
