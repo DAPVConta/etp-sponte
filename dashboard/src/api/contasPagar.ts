@@ -24,8 +24,12 @@ export interface LancamentoFiltros {
 export const ContasPagarAPI = {
   // Busca contas do banco de dados (Supabase) para o Dashboard
   async listar(unidadeId: string | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
-    // Convertendo para YYYY-MM-DD para o Postgres
-    const endStr = endDate;
+    // Filtro: linhas onde vencimento OU data_pagamento caem na janela [start, end].
+    // Usa OR de dois ANDs para o planner aproveitar idx_etp_cp_unid_venc e
+    // idx_etp_cp_unid_pag (bitmap OR), evitando seq scan da tabela inteira.
+    const windowFilter =
+      `and(vencimento.gte.${startDate},vencimento.lte.${endDate}),` +
+      `and(data_pagamento.gte.${startDate},data_pagamento.lte.${endDate})`;
 
     let allData: any[] = [];
     let page = 0;
@@ -34,8 +38,8 @@ export const ContasPagarAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_pagar')
-        .select('conta_pagar_id, numero_parcela, sacado, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria, forma_cobranca, tipo_recebimento')
-        .or(`vencimento.lte.${endStr},data_pagamento.lte.${endStr}`)
+        .select('conta_pagar_id, numero_parcela, sacado, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
+        .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (unidadeId) {
@@ -73,8 +77,8 @@ export const ContasPagarAPI = {
       ValorParcela: Number(row.valor_parcela),
       ValorPago: Number(row.valor_pago),
       Categoria: row.categoria || '',
-      FormaCobranca: row.forma_cobranca || '',
-      TipoRecebimento: row.tipo_recebimento || '',
+      FormaCobranca: '',
+      TipoRecebimento: '',
       ContaID: '',
       RetornoOperacao: ''
     }));
@@ -143,13 +147,16 @@ export const ContasPagarAPI = {
     let page = 0;
     const PAGE_SIZE = 1000;
 
+    const windowFilter =
+      `and(vencimento.gte.${startDate},vencimento.lte.${endDate}),` +
+      `and(data_pagamento.gte.${startDate},data_pagamento.lte.${endDate})`;
+
     while (true) {
       const { data, error } = await supabase
         .from('etp_contas_pagar')
         .select('unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
         .in('unidade_id', unidadeIds)
-        .or(`vencimento.gte.${startDate},data_pagamento.gte.${startDate}`)
-        .or(`vencimento.lte.${endDate},data_pagamento.lte.${endDate}`)
+        .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;

@@ -1,10 +1,26 @@
 // Parser do relatório "Fluxo de Caixa" do Sponte (PDF exportado do SPRel/ReportViewer)
 // Extrai: nome da unidade, período (início/fim) e os lançamentos (data, categoria, E/S, valor).
+//
+// pdfjs-dist é carregado dinamicamente dentro de parseFluxoCaixaPDF para que o
+// chunk pesado (>1MB do worker + lib) saia do bundle principal e só seja baixado
+// quando o usuário abrir o modal de importação.
 
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+type PdfJsModule = typeof import('pdfjs-dist');
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+let pdfjsPromise: Promise<PdfJsModule> | null = null;
+async function loadPdfJs(): Promise<PdfJsModule> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = (async () => {
+      const [lib, workerUrlMod] = await Promise.all([
+        import('pdfjs-dist'),
+        import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+      ]);
+      lib.GlobalWorkerOptions.workerSrc = (workerUrlMod as { default: string }).default;
+      return lib;
+    })();
+  }
+  return pdfjsPromise;
+}
 
 export interface FluxoCaixaLancamento {
   data: string;          // YYYY-MM-DD
@@ -61,6 +77,7 @@ function groupByLine(items: TextItem[]): TextItem[][] {
 }
 
 export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatorio> {
+  const pdfjsLib = await loadPdfJs();
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 

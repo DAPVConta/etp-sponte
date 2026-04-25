@@ -30,8 +30,13 @@ export interface LancamentoCRFiltros {
 
 export const ContasReceberAPI = {
   // Busca contas do banco (Supabase) para consumo do Dashboard
-  async listar(unidadeId: string | null, _startDate: string, endDate: string): Promise<ParcelaReceber[]> {
-    const endStr = endDate;
+  async listar(unidadeId: string | null, startDate: string, endDate: string): Promise<ParcelaReceber[]> {
+    // Filtro: linhas onde vencimento OU data_pagamento caem na janela [start, end].
+    // Usa OR de dois ANDs para o planner aproveitar idx_etp_cr_unid_venc e
+    // idx_etp_cr_unid_pag (bitmap OR), evitando seq scan da tabela inteira.
+    const windowFilter =
+      `and(vencimento.gte.${startDate},vencimento.lte.${endDate}),` +
+      `and(data_pagamento.gte.${startDate},data_pagamento.lte.${endDate})`;
 
     let allData: any[] = [];
     let page = 0;
@@ -40,8 +45,8 @@ export const ContasReceberAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_receber')
-        .select('conta_receber_id, numero_parcela, sacado, aluno_id, situacao_parcela, situacao_cnab, vencimento, data_pagamento, valor_parcela, valor_pago, categoria, forma_cobranca, tipo_recebimento, bolsa_associada, numero_boleto, fatura_id, conta_id')
-        .or(`vencimento.lte.${endStr},data_pagamento.lte.${endStr}`)
+        .select('conta_receber_id, numero_parcela, sacado, aluno_id, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
+        .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (unidadeId) {
@@ -61,13 +66,16 @@ export const ContasReceberAPI = {
       page++;
     }
 
-    // Mapear para a interface ParcelaReceber (campos em PascalCase como vem do XML)
+    // Mapear para a interface ParcelaReceber (campos em PascalCase como vem do XML).
+    // Campos não usados pelos dashboards (forma_cobranca, tipo_recebimento, bolsa,
+    // numero_boleto, fatura_id, conta_id, situacao_cnab) ficam como string vazia
+    // para preservar o contrato do tipo sem custo de I/O.
     return allData.map(row => ({
       ContaReceberID:  String(row.conta_receber_id),
       NumeroParcela:   row.numero_parcela,
       Sacado:          row.sacado || '',
       SituacaoParcela: row.situacao_parcela,
-      SituacaoCNAB:    row.situacao_cnab || '',
+      SituacaoCNAB:    '',
       Vencimento:      row.vencimento ? `${row.vencimento}T00:00:00` : '',
       DataPagamento:   row.data_pagamento
         ? `${row.data_pagamento.split('-')[2]}/${row.data_pagamento.split('-')[1]}/${row.data_pagamento.split('-')[0]}`
@@ -75,13 +83,13 @@ export const ContasReceberAPI = {
       ValorParcela:    Number(row.valor_parcela),
       ValorPago:       Number(row.valor_pago),
       Categoria:       row.categoria || '',
-      FormaCobranca:   row.forma_cobranca || '',
-      TipoRecebimento: row.tipo_recebimento || '',
-      BolsaAssociada:  row.bolsa_associada || '',
-      NumeroBoleto:    row.numero_boleto != null ? String(row.numero_boleto) : '',
-      FaturaID:        row.fatura_id    != null ? String(row.fatura_id)    : '',
-      ContaID:         row.conta_id     != null ? String(row.conta_id)     : '',
-      AlunoID:         row.aluno_id     != null ? String(row.aluno_id)     : '',
+      FormaCobranca:   '',
+      TipoRecebimento: '',
+      BolsaAssociada:  '',
+      NumeroBoleto:    '',
+      FaturaID:        '',
+      ContaID:         '',
+      AlunoID:         row.aluno_id != null ? String(row.aluno_id) : '',
       RetornoOperacao: '',
     }));
   },
@@ -156,13 +164,16 @@ export const ContasReceberAPI = {
     let page = 0;
     const PAGE_SIZE = 1000;
 
+    const windowFilter =
+      `and(vencimento.gte.${startDate},vencimento.lte.${endDate}),` +
+      `and(data_pagamento.gte.${startDate},data_pagamento.lte.${endDate})`;
+
     while (true) {
       const { data, error } = await supabase
         .from('etp_contas_receber')
         .select('unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
         .in('unidade_id', unidadeIds)
-        .or(`vencimento.gte.${startDate},data_pagamento.gte.${startDate}`)
-        .or(`vencimento.lte.${endDate},data_pagamento.lte.${endDate}`)
+        .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;

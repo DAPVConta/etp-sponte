@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
@@ -11,8 +11,11 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Unidade, ParcelaPagar, ParcelaReceber } from '@/types';
-import ImportarCaixaModal from '@/components/ImportarCaixaModal';
 import { parseParcelasReceberXML } from '@/lib/sponteXmlParser';
+
+// Carregamento sob demanda — o modal puxa o parser de PDF (pdfjs ~1.4MB),
+// que só faz sentido baixar quando o usuário decide importar fluxo de caixa.
+const ImportarCaixaModal = lazy(() => import('@/components/ImportarCaixaModal'));
 
 type SyncType = 'cp' | 'cr';
 
@@ -716,12 +719,14 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
       </section>
 
       {caixaModalOpen && (
-        <ImportarCaixaModal
-          unidades={unidades}
-          accentColor={accentColor}
-          onClose={() => setCaixaModalOpen(false)}
-          onImportado={() => { loadSyncMap(); }}
-        />
+        <Suspense fallback={null}>
+          <ImportarCaixaModal
+            unidades={unidades}
+            accentColor={accentColor}
+            onClose={() => setCaixaModalOpen(false)}
+            onImportado={() => { loadSyncMap(); }}
+          />
+        </Suspense>
       )}
     </div>
   );

@@ -114,6 +114,12 @@ const valorRealizado = (r: LinhaCP) => r.valor_pago > 0 ? r.valor_pago : r.valor
 // Fetch paginado com intervalo de datas — vencimento OU data_pagamento dentro
 async function fetchRange<T>(table: string, unidadeIds: string[], startStr: string, endStr: string, columns: string): Promise<T[]> {
   if (!unidadeIds.length) return [];
+  // Linhas onde vencimento OU data_pagamento caem em [start, end]. OR de dois ANDs
+  // permite ao planner usar bitmap OR sobre os indices compostos de (unidade,venc)
+  // e (unidade,pag), evitando seq scan da tabela inteira.
+  const windowFilter =
+    `and(vencimento.gte.${startStr},vencimento.lte.${endStr}),` +
+    `and(data_pagamento.gte.${startStr},data_pagamento.lte.${endStr})`;
   let all: T[] = [];
   let page = 0;
   const PAGE = 1000;
@@ -122,8 +128,7 @@ async function fetchRange<T>(table: string, unidadeIds: string[], startStr: stri
       .from(table)
       .select(columns)
       .in('unidade_id', unidadeIds)
-      .or(`vencimento.gte.${startStr},data_pagamento.gte.${startStr}`)
-      .or(`vencimento.lte.${endStr},data_pagamento.lte.${endStr}`)
+      .or(windowFilter)
       .range(page * PAGE, (page + 1) * PAGE - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
