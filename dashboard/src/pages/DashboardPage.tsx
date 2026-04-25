@@ -1257,71 +1257,81 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
               <Card className="p-5 animate-fade-in-up" style={{ animationDelay: '345ms' }}>
                 <div className="mb-4">
                   <h2 className="text-sm font-bold flex items-center gap-2">
-                    Ranking — Variação acumulada por unidade × grupo
+                    Plano × Realizado por unidade · grupo
                     {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
-                    <HelpHint text="Top combinações de unidade + grupo com maior desvio acumulado no período. Barras positivas (vermelho) = estouro vs. plano; negativas (verde) = economia. Soma do realizado − planejado para o mesmo escopo da tabela e do mapa de calor acima." />
+                    <HelpHint text="Compara, por grupo, o planejado e o realizado do mês corrente em cada unidade. A coluna % é realizado / planejado. A ordem dos grupos segue a Curva ABC da unidade Vitória (A = 80% do gasto · B = 15% · C = 5%)." />
                   </h2>
                   <p className="text-[0.7rem] text-muted-foreground mt-0.5">
-                    Quais combinações de unidade + grupo acumularam mais desvio no período?
+                    Mês corrente · ordem de grupos pela Curva ABC da unidade Vitória (80 / 15 / 5%)
                   </p>
                 </div>
                 {(() => {
-                  const mesesFiltroR = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
-                  const unidadesFiltroR = activeUnidade ? [activeUnidade] : unidades;
+                  const mesAtual = getMesAtualKey();
                   const normStr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
                   const getGrupoFromKey = (key: string): string | null => {
                     if (key.startsWith('G::')) return key.slice(3);
                     if (key.startsWith('SG::')) return key.slice(4).split('::')[0];
-                    return null; // ignorar chaves sem prefixo de grupo
+                    return null;
                   };
 
-                  // Set de nomes de grupo válidos
-                  const gruposValidos = new Set(Object.keys(despesasPorGrupo));
+                  type Cell = { plan: number; real: number };
+                  const dadosPorUnidade: Record<string, Record<string, Cell>> = {};
 
-                  type RankItem = { label: string; unidade: string; grupo: string; cor: string; plan: number; real: number; desvio: number };
-                  const items: RankItem[] = [];
-
-                  for (const u of unidadesFiltroR) {
+                  for (const u of unidades) {
                     const planByGrupo: Record<string, number> = {};
-                    for (const mes of mesesFiltroR) {
-                      const catMap = totaisAnuaisRaw[u.id]?.[mes] ?? {};
-                      for (const [cat, val] of Object.entries(catMap)) {
-                        const grupo = getGrupoFromKey(cat);
-                        if (!grupo) continue; // ignorar itens sem grupo
-                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
-                        planByGrupo[grupo] = (planByGrupo[grupo] || 0) + val;
-                      }
+                    const catMapPlan = totaisAnuaisRaw[u.id]?.[mesAtual] ?? {};
+                    for (const [cat, val] of Object.entries(catMapPlan)) {
+                      const grupo = getGrupoFromKey(cat);
+                      if (!grupo) continue;
+                      if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                      planByGrupo[grupo] = (planByGrupo[grupo] || 0) + val;
                     }
                     const realByGrupo: Record<string, number> = {};
-                    for (const mes of mesesFiltroR) {
-                      const catMap = realizadoAnual[u.id]?.[mes] ?? {};
-                      for (const [cat, val] of Object.entries(catMap)) {
-                        let grupo: string | null = null;
-                        for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
-                          if ([...despesas].some(d => normStr(d) === normStr(cat))) { grupo = g; break; }
-                        }
-                        if (!grupo) continue; // ignorar despesas sem grupo (sub-itens avulsos)
-                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
-                        realByGrupo[grupo] = (realByGrupo[grupo] || 0) + val;
+                    const catMapReal = realizadoAnual[u.id]?.[mesAtual] ?? {};
+                    for (const [cat, val] of Object.entries(catMapReal)) {
+                      let grupo: string | null = null;
+                      for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                        if ([...despesas].some(d => normStr(d) === normStr(cat))) { grupo = g; break; }
                       }
+                      if (!grupo) continue;
+                      if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                      realByGrupo[grupo] = (realByGrupo[grupo] || 0) + val;
                     }
-                    const allGrupos = new Set([...Object.keys(planByGrupo), ...Object.keys(realByGrupo)]);
-                    for (const grupo of allGrupos) {
-                      const plan = planByGrupo[grupo] || 0;
-                      const real = realByGrupo[grupo] || 0;
-                      const desvio = real - plan;
-                      if (plan === 0 && real === 0) continue;
-                      items.push({
-                        label: `${grupo.length > 16 ? grupo.slice(0, 15) + '…' : grupo} · ${u.nome}`,
-                        unidade: u.nome, grupo, cor: u.cor, plan, real, desvio,
-                      });
-                    }
+                    const allG = new Set([...Object.keys(planByGrupo), ...Object.keys(realByGrupo)]);
+                    const cells: Record<string, Cell> = {};
+                    for (const g of allG) cells[g] = { plan: planByGrupo[g] || 0, real: realByGrupo[g] || 0 };
+                    dadosPorUnidade[u.id] = cells;
                   }
 
-                  items.sort((a, b) => Math.abs(b.desvio) - Math.abs(a.desvio));
-                  const top = items.slice(0, 10);
-                  // Escala: o maior valor (plan ou real) define 100%
-                  const maxVal = Math.max(...top.map(d => Math.max(d.plan, d.real)), 1);
+                  const refUnidade = unidades.find(u => normStr(u.nome).includes('vitoria')) ?? unidades[0];
+                  if (!refUnidade) {
+                    return <p className="text-sm text-muted-foreground text-center py-8">Sem unidades configuradas.</p>;
+                  }
+                  const cellsRef = dadosPorUnidade[refUnidade.id] ?? {};
+
+                  const allGrupos = new Set<string>();
+                  for (const cells of Object.values(dadosPorUnidade)) for (const g of Object.keys(cells)) allGrupos.add(g);
+
+                  const grupoArr = [...allGrupos]
+                    .map(g => ({ grupo: g, realRef: cellsRef[g]?.real ?? 0 }))
+                    .filter(g => {
+                      // mantém grupo se ao menos uma unidade tem plan ou real > 0
+                      for (const u of unidades) {
+                        const c = dadosPorUnidade[u.id]?.[g.grupo];
+                        if (c && (c.plan > 0 || c.real > 0)) return true;
+                      }
+                      return false;
+                    })
+                    .sort((a, b) => b.realRef - a.realRef);
+
+                  const totalRef = grupoArr.reduce((s, g) => s + g.realRef, 0);
+                  let cumul = 0;
+                  const grupos = grupoArr.map(g => {
+                    const pct = totalRef > 0 ? (g.realRef / totalRef) * 100 : 0;
+                    cumul += pct;
+                    const classe: 'A' | 'B' | 'C' = cumul <= 80 ? 'A' : cumul <= 95 ? 'B' : 'C';
+                    return { ...g, pct, cumul, classe };
+                  });
 
                   const fmtK = (v: number) => {
                     const abs = Math.abs(v);
@@ -1329,130 +1339,76 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                     if (abs >= 1_000) return `R$${(abs / 1_000).toFixed(1)}k`;
                     return `R$${abs.toFixed(0)}`;
                   };
-                  const fmtDesvio = (v: number) => {
-                    const s = fmtK(v);
-                    return v > 0 ? `+${s}` : v < 0 ? `-${fmtK(Math.abs(v)).slice(2)}` : s;
-                  };
+                  const classeCor: Record<'A' | 'B' | 'C', string> = { A: '#6366f1', B: '#f59e0b', C: '#94a3b8' };
 
-                  if (top.length === 0) {
+                  if (grupos.length === 0) {
                     return <p className="text-sm text-muted-foreground text-center py-8">Sem dados de planejamento × realizado para exibir.</p>;
                   }
 
                   return (
-                    <>
-                      {/* Cabeçalho da tabela */}
-                      <div className="flex items-center gap-3 px-2 pb-2 mb-1 border-b border-border/40">
-                        <span className="w-5" />
-                        <span className="w-[180px] min-w-[180px] text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Grupo · Unidade</span>
-                        <span className="flex-1 text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Planejado vs Realizado</span>
-                        <span className="w-[70px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Plan</span>
-                        <span className="w-[70px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Real</span>
-                        <span className="w-[80px] text-right text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">Desvio</span>
-                      </div>
-
-                      <div className="space-y-0.5">
-                        {top.map((item, idx) => {
-                          const isOver = item.desvio > 0;
-                          const planPct = (item.plan / maxVal) * 100;
-                          const realPct = (item.real / maxVal) * 100;
-
-                          return (
-                            <div key={idx} className="flex items-center gap-3 hover:bg-muted/30 rounded-lg px-2 py-2 transition-colors">
-                              {/* Posição */}
-                              <span className="text-[0.7rem] font-bold text-muted-foreground w-5 text-right tabular-nums">{idx + 1}</span>
-
-                              {/* Label */}
-                              <div className="w-[180px] min-w-[180px] flex items-center gap-2 truncate">
-                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: item.cor }} />
-                                <span className="text-xs font-medium text-foreground truncate" title={`${item.grupo} · ${item.unidade}`}>
-                                  {item.label}
+                    <div className="overflow-x-auto -mx-5 px-5">
+                      <table className="w-full border-collapse text-xs tabular-nums">
+                        <thead>
+                          <tr className="text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">
+                            <th rowSpan={2} className="text-left px-2 py-2 sticky left-0 bg-background border-b border-border/40 min-w-[170px]">Grupo</th>
+                            {unidades.map(u => (
+                              <th key={u.id} colSpan={3} className="text-center px-2 py-2 border-b border-border/40 border-l border-border/30">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full" style={{ background: u.cor }} />
+                                  {u.nome}
                                 </span>
-                              </div>
-
-                              {/* Barra composta */}
-                              <div className="flex-1 h-7 relative">
-                                {isOver ? (
-                                  <>
-                                    {/* Planejado (cinza) */}
-                                    <div
-                                      className="absolute top-0 left-0 h-full rounded-l-md"
-                                      style={{ width: `${Math.max(planPct, 1)}%`, background: '#e2e8f0' }}
-                                    />
-                                    {/* Excedente (vermelho) */}
-                                    <div
-                                      className="absolute top-0 h-full rounded-r-md"
-                                      style={{ left: `${planPct}%`, width: `${Math.max(realPct - planPct, 0.5)}%`, background: '#ef4444' }}
-                                    />
-                                    {/* Marcador do planejado */}
-                                    <div
-                                      className="absolute top-0 h-full"
-                                      style={{ left: `${planPct}%`, width: 2, background: '#94a3b8' }}
-                                    />
-                                  </>
-                                ) : (
-                                  <>
-                                    {/* Realizado (verde) */}
-                                    <div
-                                      className="absolute top-0 left-0 h-full rounded-l-md"
-                                      style={{ width: `${Math.max(realPct, 1)}%`, background: '#059669' }}
-                                    />
-                                    {/* Economia (cinza tracejado até o plano) */}
-                                    <div
-                                      className="absolute top-0 h-full rounded-r-md border border-dashed"
-                                      style={{
-                                        left: `${realPct}%`,
-                                        width: `${Math.max(planPct - realPct, 0)}%`,
-                                        borderColor: '#d1d5db',
-                                        background: 'repeating-linear-gradient(90deg, transparent, transparent 3px, #f1f5f9 3px, #f1f5f9 6px)',
-                                      }}
-                                    />
-                                    {/* Marcador do planejado */}
-                                    <div
-                                      className="absolute top-0 h-full"
-                                      style={{ left: `${planPct}%`, width: 2, background: '#94a3b8' }}
-                                    />
-                                  </>
-                                )}
-                              </div>
-
-                              {/* Valores */}
-                              <span className="text-[0.7rem] font-medium tabular-nums w-[70px] text-right text-muted-foreground">
-                                {fmtK(item.plan)}
-                              </span>
-                              <span className="text-[0.7rem] font-semibold tabular-nums w-[70px] text-right text-foreground">
-                                {fmtK(item.real)}
-                              </span>
-                              <span
-                                className="text-xs font-bold tabular-nums w-[80px] text-right"
-                                style={{ color: isOver ? '#ef4444' : '#059669' }}
-                              >
-                                {fmtDesvio(item.desvio)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                              </th>
+                            ))}
+                          </tr>
+                          <tr className="text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">
+                            {unidades.map(u => (
+                              <React.Fragment key={u.id}>
+                                <th className="text-right px-2 py-1 border-b border-border/40 border-l border-border/30">Planejado</th>
+                                <th className="text-right px-2 py-1 border-b border-border/40">Realizado</th>
+                                <th className="text-right px-2 py-1 border-b border-border/40">%</th>
+                              </React.Fragment>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grupos.map((g, idx) => (
+                            <tr key={g.grupo} className={idx % 2 === 0 ? 'bg-muted/10' : ''}>
+                              <td className="text-left px-2 py-1.5 sticky left-0 font-medium text-foreground" style={{ background: idx % 2 === 0 ? 'rgba(120,120,120,0.05)' : 'var(--background, #fff)' }} title={`${g.grupo} (Classe ${g.classe} · ${g.pct.toFixed(1)}% do gasto de ${refUnidade.nome})`}>
+                                <span className="inline-flex items-center gap-2">
+                                  <span className="inline-block w-5 text-center px-1 py-0.5 rounded text-[0.6rem] font-bold text-white" style={{ background: classeCor[g.classe] }}>{g.classe}</span>
+                                  <span className="truncate max-w-[180px]">{g.grupo}</span>
+                                </span>
+                              </td>
+                              {unidades.map(u => {
+                                const cell = dadosPorUnidade[u.id]?.[g.grupo] ?? { plan: 0, real: 0 };
+                                const pct = cell.plan > 0 ? (cell.real / cell.plan) * 100 : null;
+                                const pctColor = pct === null ? '#94a3b8' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#059669';
+                                return (
+                                  <React.Fragment key={u.id}>
+                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30">{fmtK(cell.plan)}</td>
+                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold">{fmtK(cell.real)}</td>
+                                    <td className="text-right px-2 py-1.5 font-bold" style={{ color: pctColor }}>
+                                      {pct === null ? '—' : `${Math.round(pct)}%`}
+                                    </td>
+                                  </React.Fragment>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
 
                       {/* Legenda */}
-                      <div className="flex items-center gap-5 mt-4 pt-3 border-t border-border/40">
-                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-                          <div className="w-5 h-3 rounded bg-slate-200" />
-                          <span>planejado</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-                          <div className="w-5 h-3 rounded bg-red-500" />
-                          <span>excedente (real &gt; plan)</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-                          <div className="w-5 h-3 rounded bg-emerald-600" />
-                          <span>economia (real &lt; plan)</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground">
-                          <div className="w-0.5 h-3.5 bg-slate-400" />
-                          <span>meta planejada</span>
-                        </div>
+                      <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/40 text-[0.68rem] text-muted-foreground flex-wrap">
+                        <span className="inline-flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded text-white text-[0.6rem] font-bold" style={{ background: classeCor.A }}>A</span>~80% do gasto</span>
+                        <span className="inline-flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded text-white text-[0.6rem] font-bold" style={{ background: classeCor.B }}>B</span>~15%</span>
+                        <span className="inline-flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded text-white text-[0.6rem] font-bold" style={{ background: classeCor.C }}>C</span>~5%</span>
+                        <span>·</span>
+                        <span>% = realizado / planejado</span>
+                        <span>·</span>
+                        <span>ordenação: <span className="font-medium text-foreground">{refUnidade.nome}</span></span>
                       </div>
-                    </>
+                    </div>
                   );
                 })()}
               </Card>
