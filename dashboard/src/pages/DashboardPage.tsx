@@ -1340,6 +1340,13 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                     return `R$${abs.toFixed(0)}`;
                   };
                   const classeCor: Record<'A' | 'B' | 'C', string> = { A: '#6366f1', B: '#f59e0b', C: '#94a3b8' };
+                  const hexToRgba = (hex: string, alpha: number) => {
+                    const m = hex.replace('#', '').match(/.{2}/g);
+                    if (!m || m.length < 3) return hex;
+                    const [r, g, b] = m.map(h => parseInt(h, 16));
+                    return `rgba(${r},${g},${b},${alpha})`;
+                  };
+                  const unidadeBg = (cor: string, strong = false) => hexToRgba(cor, strong ? 0.14 : 0.07);
 
                   if (grupos.length === 0) {
                     return <p className="text-sm text-muted-foreground text-center py-8">Sem dados de planejamento × realizado para exibir.</p>;
@@ -1352,7 +1359,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                           <tr className="text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">
                             <th rowSpan={2} className="text-left px-2 py-2 sticky left-0 bg-background border-b border-border/40 min-w-[170px]">Grupo</th>
                             {unidades.map(u => (
-                              <th key={u.id} colSpan={3} className="text-center px-2 py-2 border-b border-border/40 border-l border-border/30">
+                              <th key={u.id} colSpan={3} className="text-center px-2 py-2 border-b border-border/40 border-l border-border/30" style={{ background: unidadeBg(u.cor, true) }}>
                                 <span className="inline-flex items-center gap-1.5">
                                   <span className="w-2 h-2 rounded-full" style={{ background: u.cor }} />
                                   {u.nome}
@@ -1363,16 +1370,16 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                           <tr className="text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">
                             {unidades.map(u => (
                               <React.Fragment key={u.id}>
-                                <th className="text-right px-2 py-1 border-b border-border/40 border-l border-border/30">Planejado</th>
-                                <th className="text-right px-2 py-1 border-b border-border/40">Realizado</th>
-                                <th className="text-right px-2 py-1 border-b border-border/40">%</th>
+                                <th className="text-right px-2 py-1 border-b border-border/40 border-l border-border/30" style={{ background: unidadeBg(u.cor, true) }}>Planejado</th>
+                                <th className="text-right px-2 py-1 border-b border-border/40" style={{ background: unidadeBg(u.cor, true) }}>Realizado</th>
+                                <th className="text-right px-2 py-1 border-b border-border/40" style={{ background: unidadeBg(u.cor, true) }}>%</th>
                               </React.Fragment>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {grupos.map((g, idx) => (
-                            <tr key={g.grupo} className={idx % 2 === 0 ? 'bg-muted/10' : ''}>
+                            <tr key={g.grupo}>
                               <td className="text-left px-2 py-1.5 sticky left-0 font-medium text-foreground" style={{ background: idx % 2 === 0 ? 'rgba(120,120,120,0.05)' : 'var(--background, #fff)' }} title={`${g.grupo} (Classe ${g.classe} · ${g.pct.toFixed(1)}% do gasto de ${refUnidade.nome})`}>
                                 <span className="inline-flex items-center gap-2">
                                   <span className="inline-block w-5 text-center px-1 py-0.5 rounded text-[0.6rem] font-bold text-white" style={{ background: classeCor[g.classe] }}>{g.classe}</span>
@@ -1383,11 +1390,12 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                                 const cell = dadosPorUnidade[u.id]?.[g.grupo] ?? { plan: 0, real: 0 };
                                 const pct = cell.plan > 0 ? (cell.real / cell.plan) * 100 : null;
                                 const pctColor = pct === null ? '#94a3b8' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#059669';
+                                const colBg = unidadeBg(u.cor);
                                 return (
                                   <React.Fragment key={`${idx}-${u.id}`}>
-                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30">{fmtK(cell.plan)}</td>
-                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold">{fmtK(cell.real)}</td>
-                                    <td className="text-right px-2 py-1.5 font-bold" style={{ color: pctColor }}>
+                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtK(cell.plan)}</td>
+                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold" style={{ background: colBg }}>{fmtK(cell.real)}</td>
+                                    <td className="text-right px-2 py-1.5 font-bold" style={{ background: colBg, color: pctColor }}>
                                       {pct === null ? '—' : `${Math.round(pct)}%`}
                                     </td>
                                   </React.Fragment>
@@ -1404,11 +1412,12 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                               const totalReal = grupos.reduce((s, g) => s + (dadosPorUnidade[u.id]?.[g.grupo]?.real ?? 0), 0);
                               const pct = totalPlan > 0 ? (totalReal / totalPlan) * 100 : null;
                               const pctColor = pct === null ? '#94a3b8' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#059669';
+                              const colBg = unidadeBg(u.cor, true);
                               return (
                                 <React.Fragment key={u.id}>
-                                  <td className="text-right px-2 py-2 text-muted-foreground border-l border-border/30">{fmtK(totalPlan)}</td>
-                                  <td className="text-right px-2 py-2 text-foreground">{fmtK(totalReal)}</td>
-                                  <td className="text-right px-2 py-2" style={{ color: pctColor }}>
+                                  <td className="text-right px-2 py-2 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtK(totalPlan)}</td>
+                                  <td className="text-right px-2 py-2 text-foreground" style={{ background: colBg }}>{fmtK(totalReal)}</td>
+                                  <td className="text-right px-2 py-2" style={{ background: colBg, color: pctColor }}>
                                     {pct === null ? '—' : `${Math.round(pct)}%`}
                                   </td>
                                 </React.Fragment>
