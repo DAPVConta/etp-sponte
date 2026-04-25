@@ -6,6 +6,7 @@ export interface EmpresaConfig {
   corFundo: string;
   corFundoContainers: string;
   logoUrl: string;
+  faviconUrl: string;
   dashboardVisibilidade: string[] | null;
   dashboardOrdem: string[] | null;
 }
@@ -15,6 +16,7 @@ const DEFAULTS: Omit<EmpresaConfig, 'empresaId'> = {
   corFundo: '#f0f2f5',
   corFundoContainers: '#ffffff',
   logoUrl: '',
+  faviconUrl: '',
   dashboardVisibilidade: null,
   dashboardOrdem: null,
 };
@@ -26,6 +28,7 @@ function mapRow(row: Record<string, unknown>): EmpresaConfig {
     corFundo: (row.cor_fundo as string) || DEFAULTS.corFundo,
     corFundoContainers: (row.cor_fundo_containers as string) || DEFAULTS.corFundoContainers,
     logoUrl: (row.logo_url as string) || '',
+    faviconUrl: (row.favicon_url as string) || '',
     dashboardVisibilidade: row.dashboard_visibilidade as string[] | null,
     dashboardOrdem: row.dashboard_ordem as string[] | null,
   };
@@ -51,6 +54,7 @@ export const EmpresaConfigAPI = {
     if (config.corFundo !== undefined) payload.cor_fundo = config.corFundo;
     if (config.corFundoContainers !== undefined) payload.cor_fundo_containers = config.corFundoContainers;
     if (config.logoUrl !== undefined) payload.logo_url = config.logoUrl;
+    if (config.faviconUrl !== undefined) payload.favicon_url = config.faviconUrl;
     if (config.dashboardVisibilidade !== undefined) payload.dashboard_visibilidade = config.dashboardVisibilidade;
     if (config.dashboardOrdem !== undefined) payload.dashboard_ordem = config.dashboardOrdem;
 

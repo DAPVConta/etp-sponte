@@ -117,7 +117,8 @@ export default function AppSidebar({
   const cadastroActive = ['/unidades'].some(p => location.pathname.startsWith(p));
   const cpActive = location.pathname === '/' || ['/lancamento-cp', '/categorias'].some(p => location.pathname.startsWith(p));
   const crActive = ['/dashboard-receitas', '/lancamento-cr', '/categorias-receitas'].some(p => location.pathname.startsWith(p));
-  const logoSrc = user?.empresaLogoUrl ?? layout.logoUrl ?? '/etp-logo.png';
+  const logoSrc = layout.logoUrl || user?.empresaLogoUrl || '/etp-logo.png';
+  const usingDefaultLogo = !layout.logoUrl && !user?.empresaLogoUrl;
 
   const [cadastroOpen, setCadastroOpen] = useState(true);
   const [configMenuOpen, setConfigMenuOpen] = useState(true);
@@ -133,7 +134,7 @@ export default function AppSidebar({
           alt="Logo"
           className={cn(
             'max-h-[56px] w-auto object-contain',
-            !user?.empresaLogoUrl && !layout.logoUrl && 'brightness-0 invert opacity-90'
+            usingDefaultLogo && 'brightness-0 invert opacity-90'
           )}
         />
         {user?.empresaNomeFantasia && (

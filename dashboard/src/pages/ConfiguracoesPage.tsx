@@ -325,8 +325,17 @@ interface ConfiguracoesPageProps {
 
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
 
+interface UploadState {
+  status: UploadStatus;
+  error: string;
+}
+
+const INITIAL_UPLOAD: UploadState = { status: 'idle', error: '' };
+const BUCKET = 'Logotipo';
+
 export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: ConfiguracoesPageProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const faviconInputRef = useRef<HTMLInputElement>(null);
   const { config, update } = useEmpresaConfig();
   const { user } = useAuth();
 
@@ -335,8 +344,10 @@ export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: Config
   const [corFundoContainers, setCorFundoContainers] = useState('#ffffff');
   const [logoUrl,            setLogoUrl]            = useState('');
   const [logoPreview,        setLogoPreview]        = useState<string>('');
-  const [uploadStatus,       setUploadStatus]       = useState<UploadStatus>('idle');
-  const [uploadError,        setUploadError]        = useState('');
+  const [logoUpload,         setLogoUpload]         = useState<UploadState>(INITIAL_UPLOAD);
+  const [faviconUrl,         setFaviconUrl]         = useState('');
+  const [faviconPreview,     setFaviconPreview]     = useState<string>('');
+  const [faviconUpload,      setFaviconUpload]      = useState<UploadState>(INITIAL_UPLOAD);
   const [saved,              setSaved]              = useState(false);
 
   // Sync local state from config context
@@ -346,54 +357,71 @@ export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: Config
       setCorFundo(config.corFundo);
       setCorFundoContainers(config.corFundoContainers);
       setLogoUrl(config.logoUrl);
+      setFaviconUrl(config.faviconUrl);
     }
   }, [config]);
 
-  const handleLogoChange = useCallback(async (file: File) => {
-    const reader = new FileReader();
-    reader.onload = e => setLogoPreview(e.target?.result as string);
-    reader.readAsDataURL(file);
+  const uploadAsset = useCallback(
+    async (
+      file: File,
+      baseName: 'logo' | 'favicon',
+      setPreview: (v: string) => void,
+      setUrl: (v: string) => void,
+      setUpload: (v: UploadState) => void,
+      configKey: 'logoUrl' | 'faviconUrl',
+    ) => {
+      const reader = new FileReader();
+      reader.onload = e => setPreview(e.target?.result as string);
+      reader.readAsDataURL(file);
 
-    setUploadStatus('uploading');
-    setUploadError('');
+      setUpload({ status: 'uploading', error: '' });
 
-    const empresaId = user?.empresaId;
-    if (!empresaId) {
-      setUploadError('Empresa nao identificada.');
-      setUploadStatus('error');
-      return;
-    }
-
-    try {
-      const BUCKET = 'Logotipo';
-      const ext = file.name.split('.').pop();
-      const path = `${empresaId}/logo.${ext}`;
-
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, { upsert: true, contentType: file.type });
-
-      if (uploadErr) {
-        if (uploadErr.message?.includes('not found') || uploadErr.message?.includes('Bucket')) {
-          throw new Error(
-            `Bucket "${BUCKET}" nao existe. Crie no Supabase Dashboard → Storage → New bucket → nome: "${BUCKET}", Public: ✓`
-          );
-        }
-        throw new Error(uploadErr.message);
+      const empresaId = user?.empresaId;
+      if (!empresaId) {
+        setUpload({ status: 'error', error: 'Empresa nao identificada.' });
+        return;
       }
 
-      const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      const url = `${data.publicUrl}?t=${Date.now()}`;
+      try {
+        const ext = file.name.split('.').pop() || 'png';
+        const path = `${empresaId}/${baseName}.${ext}`;
 
-      setLogoUrl(url);
-      await update({ logoUrl: url });
-      setUploadStatus('success');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setUploadError(msg);
-      setUploadStatus('error');
-    }
-  }, [user?.empresaId, update]);
+        const { error: uploadErr } = await supabase.storage
+          .from(BUCKET)
+          .upload(path, file, { upsert: true, contentType: file.type });
+
+        if (uploadErr) {
+          if (uploadErr.message?.includes('not found') || uploadErr.message?.includes('Bucket')) {
+            throw new Error(
+              `Bucket "${BUCKET}" nao existe. Crie no Supabase Dashboard → Storage → New bucket → nome: "${BUCKET}", Public: ✓`
+            );
+          }
+          throw new Error(uploadErr.message);
+        }
+
+        const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+        const url = `${data.publicUrl}?t=${Date.now()}`;
+
+        setUrl(url);
+        await update({ [configKey]: url });
+        setUpload({ status: 'success', error: '' });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setUpload({ status: 'error', error: msg });
+      }
+    },
+    [user?.empresaId, update],
+  );
+
+  const handleLogoChange = useCallback(
+    (file: File) => uploadAsset(file, 'logo', setLogoPreview, setLogoUrl, setLogoUpload, 'logoUrl'),
+    [uploadAsset],
+  );
+
+  const handleFaviconChange = useCallback(
+    (file: File) => uploadAsset(file, 'favicon', setFaviconPreview, setFaviconUrl, setFaviconUpload, 'faviconUrl'),
+    [uploadAsset],
+  );
 
   const handleSalvar = async () => {
     await update({
@@ -407,6 +435,7 @@ export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: Config
   };
 
   const logoSrc = logoPreview || logoUrl;
+  const faviconSrc = faviconPreview || faviconUrl;
 
   return (
     <div className="p-8">
@@ -442,7 +471,7 @@ export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: Config
                 </div>
                 <div className="flex-1 space-y-2">
                   <input
-                    ref={fileInputRef}
+                    ref={logoInputRef}
                     type="file"
                     accept="image/*"
                     className="hidden"
@@ -456,24 +485,79 @@ export default function ConfiguracoesPage({ accentColor, onLayoutSaved }: Config
                     variant="outline"
                     size="sm"
                     className="gap-2"
-                    disabled={uploadStatus === 'uploading'}
-                    onClick={() => fileInputRef.current?.click()}
+                    disabled={logoUpload.status === 'uploading'}
+                    onClick={() => logoInputRef.current?.click()}
                   >
-                    {uploadStatus === 'uploading' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                    {uploadStatus === 'uploading' ? 'Enviando…' : 'Enviar imagem'}
+                    {logoUpload.status === 'uploading' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {logoUpload.status === 'uploading' ? 'Enviando…' : 'Enviar imagem'}
                   </Button>
-                  {uploadStatus === 'success' && (
+                  {logoUpload.status === 'success' && (
                     <p className="flex items-center gap-1.5 text-xs text-emerald-600">
                       <Check size={12} /> Upload concluído
                     </p>
                   )}
-                  {uploadStatus === 'error' && (
+                  {logoUpload.status === 'error' && (
                     <p className="flex items-center gap-1.5 text-xs text-destructive">
-                      <AlertCircle size={12} /> {uploadError}
+                      <AlertCircle size={12} /> {logoUpload.error}
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     PNG, JPG, SVG, WebP.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-border" />
+
+            {/* Favicon */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">Favicon</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Ícone exibido na aba do navegador.</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-lg border-2 border-dashed border-border flex items-center justify-center bg-muted/30 overflow-hidden flex-shrink-0">
+                  {faviconSrc ? (
+                    <img src={faviconSrc} alt="Favicon" className="w-full h-full object-contain p-1.5" />
+                  ) : (
+                    <ImageIcon size={22} className="text-muted-foreground/50" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <input
+                    ref={faviconInputRef}
+                    type="file"
+                    accept="image/png,image/x-icon,image/svg+xml,image/webp,.ico"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFaviconChange(file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    disabled={faviconUpload.status === 'uploading'}
+                    onClick={() => faviconInputRef.current?.click()}
+                  >
+                    {faviconUpload.status === 'uploading' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    {faviconUpload.status === 'uploading' ? 'Enviando…' : 'Enviar imagem'}
+                  </Button>
+                  {faviconUpload.status === 'success' && (
+                    <p className="flex items-center gap-1.5 text-xs text-emerald-600">
+                      <Check size={12} /> Upload concluído
+                    </p>
+                  )}
+                  {faviconUpload.status === 'error' && (
+                    <p className="flex items-center gap-1.5 text-xs text-destructive">
+                      <AlertCircle size={12} /> {faviconUpload.error}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    ICO, PNG, SVG, WebP. Ideal: 32x32 ou 64x64.
                   </p>
                 </div>
               </div>

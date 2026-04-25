@@ -37,6 +37,22 @@ export function EmpresaConfigProvider({ children }: { children: React.ReactNode 
     load();
   }, [load]);
 
+  // Aplica favicon dinamicamente quando config muda
+  useEffect(() => {
+    const url = config?.faviconUrl;
+    if (!url) return;
+
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    // Remove type para evitar conflito entre svg (padrao) e novos formatos
+    link.removeAttribute('type');
+    link.href = url;
+  }, [config?.faviconUrl]);
+
   const update = useCallback(async (partial: Partial<Omit<EmpresaConfig, 'empresaId'>>) => {
     if (!user?.empresaId) return;
     await EmpresaConfigAPI.salvar(user.empresaId, partial);
