@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export type SyncTipo = 'cp' | 'cr';
+export type SyncTipo = 'cp' | 'cr' | 'caixa';
 
 export interface SyncDia {
   unidade_id: string;

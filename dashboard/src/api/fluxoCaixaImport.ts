@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { FluxoCaixaLancamento } from '../lib/pdf-fluxo-caixa';
+import { SyncDiasAPI } from './syncDias';
 
 export interface ImportCaixaResult {
   inseridos: number;
@@ -86,6 +87,23 @@ export async function importarLancamentosCaixa(
       .upsert(slice, { onConflict: 'unidade_id,conta_pagar_id,numero_parcela' });
     if (error) throw error;
   }
+
+  // 3) Registra cada dia do periodo importado em etp_sync_dias com tipo='caixa'.
+  //    Inclui dias sem movimento (registros=0) — o PDF cobre o periodo inteiro,
+  //    entao todos os dias estao "auditados" mesmo que sem lancamentos. Assim o
+  //    mapa de status mostra "30/30" quando o mes foi importado.
+  const contagemPorDia = new Map<string, number>();
+  for (const l of lancamentos) {
+    contagemPorDia.set(l.data, (contagemPorDia.get(l.data) ?? 0) + 1);
+  }
+  const diasPeriodo: { data: string; registros: number }[] = [];
+  for (let cur = new Date(periodoInicioISO + 'T12:00:00');
+       cur <= new Date(periodoFimISO + 'T12:00:00');
+       cur.setDate(cur.getDate() + 1)) {
+    const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    diasPeriodo.push({ data: iso, registros: contagemPorDia.get(iso) ?? 0 });
+  }
+  await SyncDiasAPI.registrarBatch(unidadeId, diasPeriodo, 'caixa');
 
   return { inseridos: payload.length, removidosAntesDeInserir };
 }

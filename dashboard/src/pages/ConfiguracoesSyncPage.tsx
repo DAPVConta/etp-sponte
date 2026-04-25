@@ -77,12 +77,26 @@ function daysInMonth(year: number, month: number) {
 function pad2(n: number) { return String(n).padStart(2, '0'); }
 
 type SyncStatus = 'full' | 'partial' | 'none';
+type StatusTipo = 'cp' | 'cr' | 'caixa';
 
-interface SyncMapEntry {
+interface CellStats {
   distinctDays: number;
   totalDays: number;
   status: SyncStatus;
   records: number;
+}
+
+// Cada celula da tabela mantem 3 conjuntos de stats — um por tipo de importacao.
+type SyncMapEntry = Record<StatusTipo, CellStats>;
+
+const TIPOS_LINHAS: { tipo: StatusTipo; label: string }[] = [
+  { tipo: 'cp',    label: 'Pagar' },
+  { tipo: 'cr',    label: 'Receber' },
+  { tipo: 'caixa', label: 'Caixa' },
+];
+
+function makeEmptyStats(year: number, month: number): CellStats {
+  return { distinctDays: 0, totalDays: daysInMonth(year, month), status: 'none', records: 0 };
 }
 
 // ── Componente ──────────────────────────────────────────────────
@@ -162,39 +176,46 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
 
       const dias: SyncDia[] = await SyncDiasAPI.listar(ids, inicioAno, fimAno);
 
-      // Agrupar por unidade → mês. Dedupe dias por (unidade, data), pois
-      // cada dia pode aparecer 2x (tipo=cp e tipo=cr) apos PR1b.
+      // Agrupar por (unidade, mes, tipo). Dia distinto por tipo — cada tipo
+      // tem sua propria contagem para ser exibida em sua linha.
       const map: Record<string, Record<string, SyncMapEntry>> = {};
-      const seenDays: Record<string, Set<string>> = {};
+      const seenDaysByTipo: Record<string, Set<string>> = {};
       for (const u of unidades) map[u.id] = {};
 
       for (const d of dias) {
         const dt = new Date(d.data + 'T12:00:00');
         if (isNaN(dt.getTime())) continue;
         const mesKey = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
-        const seenKey = `${d.unidade_id}|${mesKey}`;
+        const tipo = d.tipo as StatusTipo;
 
         if (!map[d.unidade_id]) map[d.unidade_id] = {};
         if (!map[d.unidade_id][mesKey]) {
-          const total = daysInMonth(dt.getFullYear(), dt.getMonth() + 1);
-          map[d.unidade_id][mesKey] = { distinctDays: 0, totalDays: total, status: 'none', records: 0 };
+          map[d.unidade_id][mesKey] = {
+            cp:    makeEmptyStats(dt.getFullYear(), dt.getMonth() + 1),
+            cr:    makeEmptyStats(dt.getFullYear(), dt.getMonth() + 1),
+            caixa: makeEmptyStats(dt.getFullYear(), dt.getMonth() + 1),
+          };
         }
 
-        if (!seenDays[seenKey]) seenDays[seenKey] = new Set();
-        if (!seenDays[seenKey].has(d.data)) {
-          seenDays[seenKey].add(d.data);
-          map[d.unidade_id][mesKey].distinctDays++;
+        const seenKey = `${d.unidade_id}|${mesKey}|${tipo}`;
+        if (!seenDaysByTipo[seenKey]) seenDaysByTipo[seenKey] = new Set();
+        if (!seenDaysByTipo[seenKey].has(d.data)) {
+          seenDaysByTipo[seenKey].add(d.data);
+          map[d.unidade_id][mesKey][tipo].distinctDays++;
         }
-        map[d.unidade_id][mesKey].records += d.registros;
+        map[d.unidade_id][mesKey][tipo].records += d.registros;
       }
 
-      // Calcular status
+      // Calcular status por tipo
       for (const uid of Object.keys(map)) {
         for (const mesKey of Object.keys(map[uid])) {
           const entry = map[uid][mesKey];
-          if (entry.distinctDays >= entry.totalDays) entry.status = 'full';
-          else if (entry.distinctDays > 0) entry.status = 'partial';
-          else entry.status = 'none';
+          for (const t of ['cp', 'cr', 'caixa'] as StatusTipo[]) {
+            const s = entry[t];
+            if (s.distinctDays >= s.totalDays) s.status = 'full';
+            else if (s.distinctDays > 0)       s.status = 'partial';
+            else                               s.status = 'none';
+          }
         }
       }
 
@@ -607,6 +628,9 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
                   <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground uppercase tracking-wider text-[0.65rem] min-w-[140px] border-b border-r border-border/40 sticky left-0 bg-muted/40 z-10">
                     Unidade
                   </th>
+                  <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground uppercase tracking-wider text-[0.65rem] min-w-[78px] border-b border-r border-border/40 sticky left-[140px] bg-muted/40 z-10">
+                    Tipo
+                  </th>
                   {tableMonths.map(m => {
                     const isCurrentMonth = m.key === `${today.getFullYear()}-${pad2(today.getMonth() + 1)}`;
                     return (
@@ -625,73 +649,97 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
                 </tr>
               </thead>
               <tbody>
-                {unidades.map((u, idx) => (
-                  <tr
-                    key={u.id}
-                    className="border-b border-border/30 hover:bg-muted/20 transition-colors"
-                    style={{ background: idx % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.015)' }}
-                  >
-                    <td className="px-4 py-2 border-r border-border/40 sticky left-0 bg-card z-10">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: u.cor }} />
-                        <span className="font-semibold text-foreground truncate">{u.nome}</span>
-                      </div>
-                    </td>
-                    {tableMonths.map(m => {
-                      const entry = syncMap[u.id]?.[m.key];
-                      const status: SyncStatus = entry?.status || 'none';
-
-                      const cellConfig = {
-                        full: {
-                          bg: '#059669',
-                          text: '#fff',
-                          icon: <CheckCircle2 size={11} />,
-                          title: `Completo: ${entry?.distinctDays ?? 0}/${entry?.totalDays ?? daysInMonth(m.year, m.month)} dias · ${entry?.records ?? 0} registros`,
-                        },
-                        partial: {
-                          bg: '#f59e0b',
-                          text: '#fff',
-                          icon: <Clock size={11} />,
-                          title: `Parcial: ${entry?.distinctDays ?? 0}/${entry?.totalDays ?? daysInMonth(m.year, m.month)} dias · ${entry?.records ?? 0} registros`,
-                        },
-                        none: {
-                          bg: 'transparent',
-                          text: '#d1d5db',
-                          icon: <MinusCircle size={11} />,
-                          title: 'Sem dados sincronizados',
-                        },
-                      }[status];
-
-                      return (
-                        <td key={m.key} className="text-center px-1 py-1.5">
-                          <div
-                            className="mx-auto flex flex-col items-center justify-center rounded-md transition-all cursor-default"
-                            style={{
-                              width: 56,
-                              height: 36,
-                              background: status === 'none' ? undefined : cellConfig.bg,
-                              backgroundImage: status === 'none'
-                                ? 'repeating-linear-gradient(45deg, #e2e8f0 0px, #e2e8f0 1px, transparent 1px, transparent 6px)'
-                                : undefined,
-                              color: cellConfig.text,
-                            }}
-                            title={cellConfig.title}
+                {unidades.map((u, idx) => {
+                  const stripe = idx % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.015)';
+                  return TIPOS_LINHAS.map((linha, li) => {
+                    const isLast = li === TIPOS_LINHAS.length - 1;
+                    return (
+                      <tr
+                        key={`${u.id}-${linha.tipo}`}
+                        className={cn(
+                          'hover:bg-muted/20 transition-colors',
+                          isLast ? 'border-b-2 border-border/60' : 'border-b border-border/15'
+                        )}
+                        style={{ background: stripe }}
+                      >
+                        {li === 0 && (
+                          <td
+                            rowSpan={TIPOS_LINHAS.length}
+                            className="px-4 py-2 border-r border-border/40 align-middle sticky left-0 z-10"
+                            style={{ background: stripe === 'transparent' ? 'var(--card)' : '#fafafa' }}
                           >
-                            {cellConfig.icon}
-                            {status !== 'none' && (
-                              <span className="text-[0.55rem] font-bold leading-tight mt-0.5">
-                                {entry?.distinctDays}/{entry?.totalDays}
-                              </span>
-                            )}
-                          </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: u.cor }} />
+                              <span className="font-semibold text-foreground truncate">{u.nome}</span>
+                            </div>
+                          </td>
+                        )}
+                        <td
+                          className="px-3 py-1.5 border-r border-border/40 sticky left-[140px] z-10 text-[0.7rem] text-muted-foreground"
+                          style={{ background: stripe === 'transparent' ? 'var(--card)' : '#fafafa' }}
+                        >
+                          {linha.label}
                         </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                        {tableMonths.map(m => {
+                          const stats = syncMap[u.id]?.[m.key]?.[linha.tipo];
+                          const status: SyncStatus = stats?.status || 'none';
+                          const distinctDays = stats?.distinctDays ?? 0;
+                          const totalDays = stats?.totalDays ?? daysInMonth(m.year, m.month);
+                          const records = stats?.records ?? 0;
+
+                          const cellConfig = {
+                            full: {
+                              bg: '#059669',
+                              text: '#fff',
+                              icon: <CheckCircle2 size={10} />,
+                              title: `${linha.label} — Completo: ${distinctDays}/${totalDays} dias · ${records} registros`,
+                            },
+                            partial: {
+                              bg: '#f59e0b',
+                              text: '#fff',
+                              icon: <Clock size={10} />,
+                              title: `${linha.label} — Parcial: ${distinctDays}/${totalDays} dias · ${records} registros`,
+                            },
+                            none: {
+                              bg: 'transparent',
+                              text: '#d1d5db',
+                              icon: <MinusCircle size={10} />,
+                              title: `${linha.label} — Sem dados sincronizados`,
+                            },
+                          }[status];
+
+                          return (
+                            <td key={m.key} className="text-center px-1 py-0.5">
+                              <div
+                                className="mx-auto flex items-center justify-center gap-1 rounded-md transition-all cursor-default"
+                                style={{
+                                  width: 56,
+                                  height: 22,
+                                  background: status === 'none' ? undefined : cellConfig.bg,
+                                  backgroundImage: status === 'none'
+                                    ? 'repeating-linear-gradient(45deg, #e2e8f0 0px, #e2e8f0 1px, transparent 1px, transparent 6px)'
+                                    : undefined,
+                                  color: cellConfig.text,
+                                }}
+                                title={cellConfig.title}
+                              >
+                                {cellConfig.icon}
+                                {status !== 'none' && (
+                                  <span className="text-[0.6rem] font-bold leading-none">
+                                    {distinctDays}/{totalDays}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  });
+                })}
                 {unidades.length === 0 && (
                   <tr>
-                    <td colSpan={tableMonths.length + 1} className="text-center py-8 text-muted-foreground">
+                    <td colSpan={tableMonths.length + 2} className="text-center py-8 text-muted-foreground">
                       Nenhuma unidade cadastrada.
                     </td>
                   </tr>
