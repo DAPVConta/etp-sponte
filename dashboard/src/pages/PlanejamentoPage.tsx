@@ -75,6 +75,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
 
   const [treeData, setTreeData]               = useState<RowGrupo[]>([]);
   const [valores, setValores]                 = useState<Map<string, ValorEntry>>(new Map());
+  const [savedKeys, setSavedKeys]             = useState<Set<string>>(new Set());
   const [collapsedGrupos, setCollapsedGrupos]       = useState<Set<string>>(new Set());
   const [collapsedSubgrupos, setCollapsedSubgrupos] = useState<Set<string>>(new Set());
 
@@ -120,7 +121,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
   }, [unidades]);
 
   // ── Helpers reset ─────────────────────────────────────────────────────────
-  const resetTable = () => { setTreeData([]); setValores(new Map()); setTabelaVisivel(false); setSaveStatus('idle'); };
+  const resetTable = () => { setTreeData([]); setValores(new Map()); setSavedKeys(new Set()); setTabelaVisivel(false); setSaveStatus('idle'); };
 
   const toggleMes = useCallback((value: string) => {
     setMesesSelecionados([value]);
@@ -188,6 +189,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
       const salvos = await PlanejamentoAPI.buscar([...selectedIds], mesesSelecionados[0]);
       const savedMap = new Map<string, ValorEntry>();
       for (const s of salvos) savedMap.set(s.categoria, { valor: s.valor_planejado, obs: s.observacao || '' });
+      setSavedKeys(new Set(savedMap.keys()));
 
       // 4. Montar árvore
       const grupoRows    = allItems.filter(i => i.tipo === 'grupo');
@@ -293,6 +295,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
       );
       setSaveStatus('ok');
       setSavedSnapshot(snapshotValores(valores));
+      setSavedKeys(new Set(valores.keys()));
       setTimeout(() => setSaveStatus('idle'), 3000);
       // Atualizar tabela anual
       PlanejamentoAPI.totaisAnuaisPorUnidade(unidades.map(u => u.id), new Date().getFullYear())
@@ -656,6 +659,18 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
 
           {/* Tree table */}
           <Card className="overflow-hidden">
+            {(() => {
+              const naoSalvosCount = filteredTree.filter(g => !savedKeys.has(g.key)).length;
+              if (naoSalvosCount === 0) return null;
+              return (
+                <div className="flex items-start gap-2.5 px-6 py-3 bg-amber-50 border-b border-amber-200">
+                  <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-amber-800">
+                    <strong>{naoSalvosCount} grupo{naoSalvosCount !== 1 ? 's' : ''}</strong> {naoSalvosCount !== 1 ? 'estão' : 'está'} exibindo o valor padrão (média 6 meses) e ainda não {naoSalvosCount !== 1 ? 'foram persistidos' : 'foi persistido'} no banco para esta unidade/mês. Os dashboards mostrarão R$0 como planejado até que você clique em <strong>Salvar</strong>.
+                  </div>
+                </div>
+              );
+            })()}
             <div className="flex justify-between items-center px-6 py-4 border-b border-border/50 flex-wrap gap-3">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <BarChart3 size={17} style={{ color: accentColor }} />
@@ -697,12 +712,18 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
                   // Valor planejado do grupo: sempre do input do grupo (todos têm MoedaInput)
                   const grupoValor    = valores.get(grupo.key)?.valor ?? 0;
                   const grupoVariacao = grupoValor - grupo.media;
+                  const grupoNaoSalvo = !savedKeys.has(grupo.key);
 
                   return (
                     <TableRowGroup key={grupo.key}>
                       {/* ── Linha do grupo ── */}
                       <TableRow
-                        className="bg-slate-100 hover:bg-slate-100/90 border-t-2 border-border/40 cursor-pointer select-none"
+                        className={cn(
+                          "hover:bg-slate-100/90 border-t-2 cursor-pointer select-none",
+                          grupoNaoSalvo
+                            ? "bg-amber-50/70 border-amber-200/60"
+                            : "bg-slate-100 border-border/40"
+                        )}
                         onClick={() => toggleGrupo(grupo.key)}
                       >
                         {/* Nome */}
@@ -719,6 +740,16 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
                               <span className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.62rem] font-bold uppercase tracking-wide bg-blue-50 text-blue-600 border border-blue-200 flex-shrink-0">
                                 <Tag size={9} />
                                 {grupo.subgrupos.length} sub
+                              </span>
+                            )}
+                            {grupoNaoSalvo && (
+                              <span
+                                className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.62rem] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-300 flex-shrink-0"
+                                title="Este grupo ainda não foi salvo no banco para esta unidade/mês. O valor exibido é o padrão (média 6 meses). Clique em Salvar para persistir."
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <AlertCircle size={9} />
+                                Não salvo
                               </span>
                             )}
                           </div>
