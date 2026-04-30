@@ -78,25 +78,52 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Convida usuario (cria ou reenvia email)
+    // Convida usuario (cria ou, se ja existir, apenas vincula a empresa)
     const { data, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
       redirectTo: `${Deno.env.get('SITE_URL') ?? ''}/login`,
     });
-    if (inviteError) throw inviteError;
+
+    let userId: string;
+    let alreadyExisted = false;
+    if (inviteError) {
+      const code = (inviteError as { code?: string }).code;
+      const status = (inviteError as { status?: number }).status;
+      const emailExists = code === 'email_exists' || status === 422;
+      if (!emailExists) throw inviteError;
+
+      // Usuario ja registrado: busca o id em auth.users via RPC SECURITY DEFINER
+      const { data: existingId, error: lookupError } = await supabaseAdmin
+        .rpc('get_auth_user_id_by_email', { p_email: email });
+      if (lookupError) throw lookupError;
+      if (!existingId) {
+        return new Response(JSON.stringify({ error: 'Usuario ja registrado mas nao foi encontrado em auth.users' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      userId = existingId as string;
+      alreadyExisted = true;
+    } else {
+      userId = data.user.id;
+    }
 
     // Vincula na tabela etp_user_empresas
     const { error: vincularError } = await supabaseAdmin
       .from('etp_user_empresas')
-      .upsert({ user_id: data.user.id, empresa_id: empresaId, role }, { onConflict: 'user_id,empresa_id' });
+      .upsert({ user_id: userId, empresa_id: empresaId, role }, { onConflict: 'user_id,empresa_id' });
     if (vincularError) throw vincularError;
 
-    return new Response(JSON.stringify({ ok: true, userId: data.user.id }), {
+    return new Response(JSON.stringify({ ok: true, userId, alreadyExisted }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (err: unknown) {
-    const e = err as { message?: string };
-    return new Response(JSON.stringify({ error: e?.message ?? 'Erro interno' }), {
+    const e = err as { message?: string; code?: string; status?: number; details?: string };
+    console.error('invite-user error:', JSON.stringify(e));
+    return new Response(JSON.stringify({
+      error: e?.message ?? 'Erro interno',
+      code: e?.code,
+      details: e?.details,
+    }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
