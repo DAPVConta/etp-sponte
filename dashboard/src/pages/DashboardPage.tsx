@@ -1255,18 +1255,26 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
             );
             case 'ranking': return (
               <Card className="p-5 animate-fade-in-up" style={{ animationDelay: '345ms' }}>
-                <div className="mb-4">
-                  <h2 className="text-sm font-bold flex items-center gap-2">
-                    Plano × Realizado por unidade · grupo
-                    {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
-                    <HelpHint text="Compara, por grupo, o planejado e o realizado do mês corrente em cada unidade. A coluna % é realizado / planejado. A ordem dos grupos segue a Curva ABC da unidade Vitória (A = 80% do gasto · B = 15% · C = 5%)." />
-                  </h2>
-                  <p className="text-[0.7rem] text-muted-foreground mt-0.5">
-                    Mês corrente · ordem de grupos pela Curva ABC da unidade Vitória (80 / 15 / 5%)
-                  </p>
-                </div>
                 {(() => {
-                  const mesAtual = getMesAtualKey();
+                  const mesesFiltroRanking = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
+                  const periodoLabel = mesesFiltroRanking.length === 1
+                    ? (mesesDisponiveis.find(m => m.value === mesesFiltroRanking[0])?.label ?? mesesFiltroRanking[0])
+                    : `${mesesFiltroRanking.length} meses selecionados`;
+                  return (
+                    <div className="mb-4">
+                      <h2 className="text-sm font-bold flex items-center gap-2">
+                        Plano × Realizado por unidade · grupo
+                        {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
+                        <HelpHint text="Compara, por grupo, o planejado e o realizado do período selecionado em cada unidade. A coluna % é realizado / planejado. A ordem dos grupos segue a Curva ABC da unidade Vitória (A = 80% do gasto · B = 15% · C = 5%)." />
+                      </h2>
+                      <p className="text-[0.7rem] text-muted-foreground mt-0.5">
+                        {periodoLabel} · ordem de grupos pela Curva ABC da unidade Vitória (80 / 15 / 5%)
+                      </p>
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const mesesFiltroRanking = mesesSelecionados.length > 0 ? mesesSelecionados : [getMesAtualKey()];
                   const normStr = (s: string) => s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
                   const getGrupoFromKey = (key: string): string | null => {
                     if (key.startsWith('G::')) return key.slice(3);
@@ -1279,23 +1287,25 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
 
                   for (const u of unidades) {
                     const planByGrupo: Record<string, number> = {};
-                    const catMapPlan = totaisAnuaisRaw[u.id]?.[mesAtual] ?? {};
-                    for (const [cat, val] of Object.entries(catMapPlan)) {
-                      const grupo = getGrupoFromKey(cat);
-                      if (!grupo) continue;
-                      if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
-                      planByGrupo[grupo] = (planByGrupo[grupo] || 0) + val;
-                    }
                     const realByGrupo: Record<string, number> = {};
-                    const catMapReal = realizadoAnual[u.id]?.[mesAtual] ?? {};
-                    for (const [cat, val] of Object.entries(catMapReal)) {
-                      let grupo: string | null = null;
-                      for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
-                        if ([...despesas].some(d => normStr(d) === normStr(cat))) { grupo = g; break; }
+                    for (const mes of mesesFiltroRanking) {
+                      const catMapPlan = totaisAnuaisRaw[u.id]?.[mes] ?? {};
+                      for (const [cat, val] of Object.entries(catMapPlan)) {
+                        const grupo = getGrupoFromKey(cat);
+                        if (!grupo) continue;
+                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                        planByGrupo[grupo] = (planByGrupo[grupo] || 0) + val;
                       }
-                      if (!grupo) continue;
-                      if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
-                      realByGrupo[grupo] = (realByGrupo[grupo] || 0) + val;
+                      const catMapReal = realizadoAnual[u.id]?.[mes] ?? {};
+                      for (const [cat, val] of Object.entries(catMapReal)) {
+                        let grupo: string | null = null;
+                        for (const [g, despesas] of Object.entries(despesasPorGrupo)) {
+                          if ([...despesas].some(d => normStr(d) === normStr(cat))) { grupo = g; break; }
+                        }
+                        if (!grupo) continue;
+                        if (selectedCategory !== 'Todas' && grupo !== selectedCategory) continue;
+                        realByGrupo[grupo] = (realByGrupo[grupo] || 0) + val;
+                      }
                     }
                     const allG = new Set([...Object.keys(planByGrupo), ...Object.keys(realByGrupo)]);
                     const cells: Record<string, Cell> = {};
