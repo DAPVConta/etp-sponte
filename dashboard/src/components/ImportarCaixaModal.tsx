@@ -92,7 +92,10 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
       setSucesso(
         `Importação concluída: ${r.inseridos} lançamento(s) inseridos` +
         (r.removidosAntesDeInserir > 0
-          ? ` (${r.removidosAntesDeInserir} registros anteriores do mesmo período foram substituídos).`
+          ? ` (${r.removidosAntesDeInserir} registros anteriores do mesmo período foram substituídos)`
+          : '') +
+        (r.ignoradosPorDuplicidade > 0
+          ? `, ${r.ignoradosPorDuplicidade} ignorado(s) por já existirem via API Sponte.`
           : '.')
       );
       onImportado();

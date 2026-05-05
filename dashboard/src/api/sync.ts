@@ -20,6 +20,14 @@ const toIntOrNull = (s: string | number | null | undefined): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+// Normaliza nome de categoria vindo da API Sponte. Alguns cadastros tem
+// pontos finais redundantes (ex.: "Rescisao Contratual..") por digitacao errada
+// no Sponte; aqui limpamos antes de persistir para nao poluir agrupamentos.
+const normalizeCategoria = (s: string | null | undefined): string => {
+  if (!s) return '';
+  return s.replace(/[.\s]+$/, '').trim();
+};
+
 export const SyncAPI = {
   // Sincroniza Categorias de Despesas (Upsert)
   async syncCategorias(unidadeId: string, categorias: CategoriaDespesa[]): Promise<void> {
@@ -28,7 +36,7 @@ export const SyncAPI = {
     const payload = categorias.map(c => ({
       unidade_id: unidadeId,
       categoria_id: c.categoriaID,
-      nome: c.nome,
+      nome: normalizeCategoria(c.nome),
       sincronizado_em: new Date().toISOString()
     }));
 
@@ -50,7 +58,7 @@ export const SyncAPI = {
     const payload = categorias.map(c => ({
       unidade_id: unidadeId,
       categoria_id: c.categoriaID,
-      nome: c.nome,
+      nome: normalizeCategoria(c.nome),
       sincronizado_em: new Date().toISOString()
     }));
 
@@ -81,7 +89,7 @@ export const SyncAPI = {
         conta_pagar_id: parseInt(p.ContaPagarID, 10),
         numero_parcela: p.NumeroParcela,
         sacado: p.Sacado,
-        categoria: p.Categoria,
+        categoria: normalizeCategoria(p.Categoria),
         forma_cobranca: p.FormaCobranca,
         tipo_recebimento: p.TipoRecebimento,
         vencimento: parseDateForDB(p.Vencimento),
@@ -119,7 +127,7 @@ export const SyncAPI = {
         numero_parcela: p.NumeroParcela,
         sacado: p.Sacado,
         aluno_id: toIntOrNull(p.AlunoID),
-        categoria: p.Categoria,
+        categoria: normalizeCategoria(p.Categoria),
         forma_cobranca: p.FormaCobranca,
         tipo_recebimento: p.TipoRecebimento,
         bolsa_associada: p.BolsaAssociada || null,

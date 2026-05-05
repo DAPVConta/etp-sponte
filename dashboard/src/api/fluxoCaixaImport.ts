@@ -5,6 +5,7 @@ import { SyncDiasAPI } from './syncDias';
 export interface ImportCaixaResult {
   inseridos: number;
   removidosAntesDeInserir: number;
+  ignoradosPorDuplicidade: number;
 }
 
 // Gera conta_pagar_id determinístico cabendo em int32.
@@ -13,6 +14,19 @@ function gerarContaPagarId(dataISO: string, idx: number): number {
   const [y, m, d] = dataISO.split('-').map(Number);
   const yy = y % 100;
   return -((yy * 10000 + m * 100 + d) * 100 + idx);
+}
+
+// Mesma normalizacao aplicada em sync.ts: remove pontos finais redundantes
+// que vem do cadastro do Sponte (ex.: "Rescisao Contratual..").
+const normalizeCategoria = (s: string | null | undefined): string => {
+  if (!s) return '';
+  return s.replace(/[.\s]+$/, '').trim();
+};
+
+// Chave canonica usada para detectar duplicidade entre PDF Caixa e API Sponte:
+// (data, valor, categoria-normalizada). Valor arredondado a 2 casas.
+function dedupKey(dataISO: string, valor: number, categoria: string): string {
+  return `${dataISO}|${valor.toFixed(2)}|${normalizeCategoria(categoria).toLowerCase()}`;
 }
 
 /**
@@ -51,22 +65,49 @@ export async function importarLancamentosCaixa(
   }
 
   if (lancamentos.length === 0) {
-    return { inseridos: 0, removidosAntesDeInserir };
+    return { inseridos: 0, removidosAntesDeInserir, ignoradosPorDuplicidade: 0 };
   }
 
-  // 2) Insere novas linhas. conta_pagar_id único dentro do período (AAMMDD*100 + idx por dia)
+  // 2) Carrega lancamentos NAO-CAIXA do periodo (vindos da API Sponte) para
+  //    deduplicar contra eles. Quando o mesmo pagamento aparece tanto no
+  //    relatorio Sponte quanto no PDF Caixa (ex.: Agua Mineral pago em caixa
+  //    fisico mas tambem registrado no Sponte), gravar os dois inflaria o total.
+  //    Regra: ignora lancamento do PDF Caixa se ja existe linha (Sponte) com
+  //    mesma (data_pagamento, valor_pago, categoria-normalizada).
+  const { data: existentesSponte, error: errSp } = await supabase
+    .from('etp_contas_pagar')
+    .select('data_pagamento, valor_pago, categoria')
+    .eq('unidade_id', unidadeId)
+    .neq('forma_cobranca', 'CAIXA')
+    .gte('data_pagamento', periodoInicioISO)
+    .lte('data_pagamento', periodoFimISO);
+  if (errSp) throw errSp;
+
+  const dedupSet = new Set<string>();
+  for (const r of existentesSponte ?? []) {
+    if (!r.data_pagamento) continue;
+    dedupSet.add(dedupKey(r.data_pagamento, Number(r.valor_pago) || 0, r.categoria || ''));
+  }
+
+  // 3) Insere novas linhas. conta_pagar_id único dentro do período (AAMMDD*100 + idx por dia)
   //    Para evitar colisão quando mesma unidade tem N lançamentos no mesmo dia, indexa por data.
+  let ignoradosPorDuplicidade = 0;
   const idxPorDia = new Map<string, number>();
-  const payload = lancamentos.map(l => {
+  const payload: Array<Record<string, unknown>> = [];
+  for (const l of lancamentos) {
+    if (dedupSet.has(dedupKey(l.data, l.valor, l.categoria))) {
+      ignoradosPorDuplicidade++;
+      continue;
+    }
     const n = (idxPorDia.get(l.data) ?? 0) + 1;
     idxPorDia.set(l.data, n);
     const contaPagarId = gerarContaPagarId(l.data, n);
-    return {
+    payload.push({
       unidade_id: unidadeId,
       conta_pagar_id: contaPagarId,
       numero_parcela: '1/1',
       sacado: l.origemDestino || 'Caixa',
-      categoria: l.categoria,
+      categoria: normalizeCategoria(l.categoria),
       forma_cobranca: 'CAIXA',
       tipo_recebimento: '',
       vencimento: l.data,
@@ -75,8 +116,8 @@ export async function importarLancamentosCaixa(
       valor_pago: l.valor,
       situacao_parcela: l.tipo === 'S' ? 'Pago' : 'Recebido',
       sincronizado_em: new Date().toISOString(),
-    };
-  });
+    });
+  }
 
   // Lotes de 500
   const BATCH = 500;
@@ -88,13 +129,15 @@ export async function importarLancamentosCaixa(
     if (error) throw error;
   }
 
-  // 3) Registra cada dia do periodo importado em etp_sync_dias com tipo='caixa'.
+  // 4) Registra cada dia do periodo importado em etp_sync_dias com tipo='caixa'.
   //    Inclui dias sem movimento (registros=0) — o PDF cobre o periodo inteiro,
   //    entao todos os dias estao "auditados" mesmo que sem lancamentos. Assim o
   //    mapa de status mostra "30/30" quando o mes foi importado.
+  //    A contagem reflete o que foi EFETIVAMENTE inserido (apos dedup).
   const contagemPorDia = new Map<string, number>();
-  for (const l of lancamentos) {
-    contagemPorDia.set(l.data, (contagemPorDia.get(l.data) ?? 0) + 1);
+  for (const row of payload) {
+    const d = row.data_pagamento as string;
+    contagemPorDia.set(d, (contagemPorDia.get(d) ?? 0) + 1);
   }
   const diasPeriodo: { data: string; registros: number }[] = [];
   for (let cur = new Date(periodoInicioISO + 'T12:00:00');
@@ -105,5 +148,5 @@ export async function importarLancamentosCaixa(
   }
   await SyncDiasAPI.registrarBatch(unidadeId, diasPeriodo, 'caixa');
 
-  return { inseridos: payload.length, removidosAntesDeInserir };
+  return { inseridos: payload.length, removidosAntesDeInserir, ignoradosPorDuplicidade };
 }
