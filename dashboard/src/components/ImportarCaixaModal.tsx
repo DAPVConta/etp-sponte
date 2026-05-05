@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { parseFluxoCaixaPDF, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
+import { parseFluxoCaixaPDF, UnsupportedReportError, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
 import { importarLancamentosCaixa } from '@/api/fluxoCaixaImport';
 import type { Unidade } from '@/types';
 import { cn } from '@/lib/utils';
@@ -71,7 +71,11 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
       const matchedId = matchUnidade(rel.unidadeNome);
       setUnidadeId(matchedId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao ler o PDF.');
+      if (e instanceof UnsupportedReportError) {
+        setError(e.message);
+      } else {
+        setError(e instanceof Error ? e.message : 'Falha ao ler o PDF.');
+      }
     } finally {
       setParsing(false);
     }
@@ -114,7 +118,11 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
           <div>
             <h2 className="text-base font-semibold">Importar Despesas pagas pelo Caixa</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Anexe o PDF do relatório "Fluxo de Caixa" do Sponte (Conta: Caixa).
+              Anexe o PDF do relatório <strong>Lançamentos do Caixa</strong> do Sponte
+              (<a href="https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx"
+                 target="_blank" rel="noopener noreferrer"
+                 className="underline hover:text-foreground">Financeiro › Relatórios › Lançamentos do Caixa</a>).
+              O formato antigo "Fluxo de Caixa" também é aceito.
             </p>
           </div>
           <button
