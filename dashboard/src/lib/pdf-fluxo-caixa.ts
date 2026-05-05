@@ -81,17 +81,21 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
-  const allItems: TextItem[] = [];
+  // Agrupa por linha PAGINA-A-PAGINA. Item Y do pdfjs reseta a cada pagina,
+  // entao agrupar globalmente faz colidir rows de paginas diferentes que
+  // calhem de cair no mesmo Y (ex.: pg2 Y=386 + pg3 Y=386 viram a mesma "linha"
+  // com dois lancamentos colados, produzindo valor=saldo e perda da pg seguinte).
+  const lines: TextItem[][] = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const tc = await page.getTextContent();
+    const pageItems: TextItem[] = [];
     for (const it of tc.items as Array<{ str: string; transform: number[] }>) {
       if (!it.str || !it.str.trim()) continue;
-      allItems.push({ str: it.str, x: it.transform[4], y: it.transform[5] });
+      pageItems.push({ str: it.str, x: it.transform[4], y: it.transform[5] });
     }
+    lines.push(...groupByLine(pageItems));
   }
-
-  const lines = groupByLine(allItems);
   const rawLines = lines.map(l => l.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
 
   // Em PDFs do Sponte, dois lançamentos podem ser agrupados na mesma linha (mesmo Y
@@ -169,7 +173,12 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
     let tipo: 'E' | 'S' = 'S';
     let origemDestino = '';
     if (tm) {
-      const idx = miolo.indexOf(tm[0]);
+      // Usa tm.index (posicao real do match) em vez de miolo.indexOf(tm[0]):
+      // indexOf encontra a 1a ocorrencia textual de " S", que pode estar dentro
+      // de uma palavra (ex.: "Taxa Pix Sponte Pay" tem " S" em "Sponte"). O
+      // regex \s+S(?:\s+|$) so casa um S isolado, mas indexOf nao sabe disso e
+      // amputa a categoria, jogando "Sponte Pay" no sacado.
+      const idx = tm.index ?? 0;
       categoria = miolo.slice(0, idx).trim();
       tipo = tm[1] as 'E' | 'S';
       origemDestino = miolo.slice(idx + tm[0].length).trim();
