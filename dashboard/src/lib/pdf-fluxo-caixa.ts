@@ -485,3 +485,134 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
     totalEntradas,
   };
 }
+
+// =============================================================================
+// FORMATO D: XML "Lancamentos do Caixa" (export XML do mesmo relatorio)
+// =============================================================================
+//
+// Estrutura: <NewDataSet><Table>...</Table>...</NewDataSet>
+// Cada <Table> e um lancamento, com campos: LancamentoID, DataLancamento,
+// DataRepasse, NomeEmpresa, Tipo (S/E), Valor (sinalizado), Categoria,
+// OrigemDestino, Complemento, Conta, etc.
+//
+// Vantagens vs PDF: 100% estruturado, sem ambiguidade de layout. Suporta
+// periodos de qualquer tamanho (multimes) sem ajuste — a granularidade vem
+// das datas dos proprios <Table>.
+async function parseLancamentosXML(file: File): Promise<FluxoCaixaRelatorio> {
+  const text = await file.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'application/xml');
+
+  if (doc.querySelector('parsererror')) {
+    throw new UnsupportedReportError(
+      'XML invalido — nao foi possivel ler o arquivo. Verifique se o arquivo nao esta corrompido.'
+    );
+  }
+
+  // Tabelas vem com namespace default vazio dependendo do export do Sponte.
+  // Usamos getElementsByTagName que ignora namespace.
+  const tables = doc.getElementsByTagName('Table');
+  if (tables.length === 0) {
+    throw new UnsupportedReportError(
+      'XML nao contem nenhum lancamento (<Table>). Verifique se o arquivo e o export ' +
+      'XML do relatorio "Lancamentos do Caixa" do Sponte.'
+    );
+  }
+
+  const getText = (el: Element, tag: string): string => {
+    const child = el.getElementsByTagName(tag)[0];
+    return child?.textContent?.trim() ?? '';
+  };
+
+  const lancamentos: FluxoCaixaLancamento[] = [];
+  let unidadeNome = '';
+  let minData = '';
+  let maxData = '';
+
+  for (let i = 0; i < tables.length; i++) {
+    const t = tables[i];
+
+    // Data: prefere <Data> (DD/MM/YYYY), fallback para <DataRepasse> (ISO)
+    const dataPtBR = getText(t, 'Data');
+    let dataISO = '';
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dataPtBR)) {
+      dataISO = ptBRtoISO(dataPtBR);
+    } else {
+      const dataRep = getText(t, 'DataRepasse');
+      const m = dataRep.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) dataISO = `${m[1]}-${m[2]}-${m[3]}`;
+    }
+    if (!dataISO) continue;
+
+    // Valor: vem com sinal (negativo para saida)
+    const valorRaw = getText(t, 'Valor');
+    const valorN = parseFloat(valorRaw);
+    if (!Number.isFinite(valorN) || valorN === 0) continue;
+
+    // Tipo: vem como S/E. Se ausente, deduz pelo sinal do valor.
+    const tipoRaw = getText(t, 'Tipo').toUpperCase();
+    const tipo: 'S' | 'E' = tipoRaw === 'E' || tipoRaw === 'S'
+      ? (tipoRaw as 'S' | 'E')
+      : (valorN < 0 ? 'S' : 'E');
+
+    const categoria = getText(t, 'Categoria');
+    if (!categoria) continue;
+
+    // Sacado: prefere OrigemDestino, depois Complemento, depois fallback.
+    const origemDestino = getText(t, 'OrigemDestino') || getText(t, 'Complemento') || '';
+
+    // Pega o nome da unidade do primeiro <Table> que tiver NomeEmpresa.
+    if (!unidadeNome) {
+      const ne = getText(t, 'NomeEmpresa');
+      if (ne) unidadeNome = ne;
+    }
+
+    lancamentos.push({
+      data: dataISO,
+      dataRep: dataISO,
+      categoria,
+      tipo,
+      origemDestino,
+      valor: Math.abs(valorN),
+    });
+
+    if (!minData || dataISO < minData) minData = dataISO;
+    if (!maxData || dataISO > maxData) maxData = dataISO;
+  }
+
+  if (lancamentos.length === 0) {
+    throw new UnsupportedReportError(
+      'XML processado mas nenhum lancamento valido encontrado (verifique campos Data, Valor e Categoria).'
+    );
+  }
+
+  const totalSaidas = lancamentos.filter(l => l.tipo === 'S').reduce((s, l) => s + l.valor, 0);
+  const totalEntradas = lancamentos.filter(l => l.tipo === 'E').reduce((s, l) => s + l.valor, 0);
+
+  return {
+    unidadeNome,
+    periodoInicio: minData,
+    periodoFim: maxData,
+    lancamentos,
+    totalRegistros: lancamentos.length,
+    totalSaidas,
+    totalEntradas,
+  };
+}
+
+// =============================================================================
+// Dispatcher generico — entry point usado pela UI
+// =============================================================================
+//
+// Detecta o tipo de arquivo (PDF ou XML) pela extensao do nome ou MIME type
+// e roteia para o parser correspondente. Tanto PDF quanto XML aceitam
+// periodos de QUALQUER tamanho (1 dia, 1 mes, varios meses) — o limite de
+// "1 mes" nao existe no parser, e dado pelo filtro que o usuario aplica no
+// Sponte ao gerar o relatorio.
+export async function parseLancamentosFile(file: File): Promise<FluxoCaixaRelatorio> {
+  const name = (file.name || '').toLowerCase();
+  const type = file.type || '';
+  const isXml = name.endsWith('.xml') || type === 'application/xml' || type === 'text/xml';
+  if (isXml) return parseLancamentosXML(file);
+  return parseFluxoCaixaPDF(file);
+}

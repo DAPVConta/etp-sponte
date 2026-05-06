@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { parseFluxoCaixaPDF, UnsupportedReportError, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
+import { parseLancamentosFile, UnsupportedReportError, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
 import { importarLancamentosCaixa } from '@/api/fluxoCaixaImport';
 import type { Unidade } from '@/types';
 import { cn } from '@/lib/utils';
@@ -60,7 +60,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
     setRelatorio(null);
     setParsing(true);
     try {
-      const rel = await parseFluxoCaixaPDF(f);
+      const rel = await parseLancamentosFile(f);
       if (!rel.periodoInicio || !rel.periodoFim) {
         throw new Error('Não consegui identificar o período no PDF.');
       }
@@ -118,11 +118,11 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
           <div>
             <h2 className="text-base font-semibold">Importar Despesas pagas pelo Caixa</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Anexe o PDF de um destes relatórios do Sponte:
+              Anexe um arquivo de um destes relatórios do Sponte (PDF ou XML, qualquer período):
               {' '}<a href="https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx"
                  target="_blank" rel="noopener noreferrer"
                  className="underline hover:text-foreground"><strong>Lançamentos do Caixa</strong></a>
-              {' '}(granular, recomendado), <strong>Plano de Contas</strong> (resumo agregado por categoria) ou o legado <strong>Fluxo de Caixa</strong>.
+              {' '}(granular, recomendado — XML é mais preciso que PDF), <strong>Plano de Contas</strong> (resumo agregado) ou o legado <strong>Fluxo de Caixa</strong>.
             </p>
           </div>
           <button
@@ -151,17 +151,17 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                 <Upload size={28} className="text-muted-foreground" />
               )}
               <div className="text-sm font-medium">
-                {parsing ? 'Lendo PDF...' : 'Clique para selecionar o PDF'}
+                {parsing ? 'Lendo arquivo...' : 'Clique para selecionar o arquivo'}
               </div>
               <div className="text-xs text-muted-foreground">
-                Apenas .pdf — formato relatório Fluxo de Caixa
+                .pdf ou .xml — relatório Lançamentos do Caixa, Plano de Contas ou Fluxo de Caixa
               </div>
             </button>
           )}
           <input
             ref={fileRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,application/xml,text/xml,.xml"
             className="hidden"
             onChange={e => {
               const f = e.target.files?.[0];
