@@ -334,18 +334,41 @@ function parseLancamentosCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
 // Detector de formato + entry point
 // =============================================================================
 
-type Formato = 'fluxo-caixa' | 'lancamentos-caixa' | 'desconhecido';
+type Formato = 'fluxo-caixa' | 'lancamentos-caixa' | 'plano-de-contas' | 'desconhecido';
+
+const URL_LANCAMENTOS_CAIXA =
+  'https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx';
 
 function detectarFormato(pages: PageItems[]): Formato {
   const head = pages[0]?.rawLines.slice(0, 30).join(' | ') ?? '';
+
+  // Casos POSITIVOS — relatorios suportados
   if (/Lan[çc]amentos\s+do\s+Caixa/i.test(head)) return 'lancamentos-caixa';
   if (/Fluxo\s+de\s+Caixa/i.test(head)) return 'fluxo-caixa';
-  // Fallback: se tem cabecalho com "Saldo" e "Data Rep", e formato A.
-  if (/Data\s+Rep|Saldo/i.test(head)) return 'fluxo-caixa';
-  // Se tem "Tipo de Movimenta" ou "Lancamento" como cabecalho, e formato B.
   if (/Tipo\s+de\s+Movimenta|Data\s+Lan[çc]amento/i.test(head)) return 'lancamentos-caixa';
+  // Fallback do formato legado: cabecalho "Data Rep" / "Saldo" — mas SO se nao
+  // tiver marcadores de Plano de Contas, evitando falso positivo.
+  if (/Data\s+Rep|\bSaldo\b/i.test(head) && !/Plano\s+de\s+[Cc]ontas/i.test(head)) {
+    return 'fluxo-caixa';
+  }
+
+  // Caso NEGATIVO conhecido — usuario subiu o PDF errado (Plano de Contas).
+  if (/Plano\s+de\s+[Cc]ontas/i.test(head) || /Total\s+do\s+sub\s+grupo/i.test(head)) {
+    return 'plano-de-contas';
+  }
+
   return 'desconhecido';
 }
+
+const ERROR_FORMATO_INVALIDO =
+  'Este PDF nao e um relatorio de lancamentos de caixa. ' +
+  'Por favor, exporte o relatorio "Lancamentos do Caixa" em ' +
+  URL_LANCAMENTOS_CAIXA + ' (Financeiro > Relatorios > Lancamentos do Caixa). ' +
+  'O relatorio "Plano de Contas" (resumo financeiro) nao serve para esta importacao.';
+
+const ERROR_FORMATO_DESCONHECIDO =
+  'Formato de PDF nao reconhecido. Por favor, exporte o relatorio "Lancamentos do Caixa" em ' +
+  URL_LANCAMENTOS_CAIXA + ' (Financeiro > Relatorios > Lancamentos do Caixa).';
 
 export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatorio> {
   const pdfjsLib = await loadPdfJs();
@@ -355,17 +378,23 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
   const pages = await extractPages(pdf);
   const formato = detectarFormato(pages);
 
+  if (formato === 'plano-de-contas') {
+    throw new UnsupportedReportError(ERROR_FORMATO_INVALIDO);
+  }
   if (formato === 'desconhecido') {
-    throw new UnsupportedReportError(
-      'Formato de PDF nao reconhecido. Por favor, exporte o relatorio "Lancamentos do Caixa" em ' +
-      'https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx ' +
-      '(Financeiro > Relatorios > Lancamentos do Caixa).'
-    );
+    throw new UnsupportedReportError(ERROR_FORMATO_DESCONHECIDO);
   }
 
   const lancamentos = formato === 'lancamentos-caixa'
     ? parseLancamentosCaixa(pages)
     : parseFluxoCaixa(pages);
+
+  // Defesa: se o detector classificou como caixa mas o parser nao extraiu
+  // nada, o PDF provavelmente nao e o que o detector achou que era. Lanca
+  // erro com a mesma orientacao para evitar mensagem confusa de "vazio".
+  if (lancamentos.length === 0) {
+    throw new UnsupportedReportError(ERROR_FORMATO_DESCONHECIDO);
+  }
 
   // Metadados (unidade + periodo) via heuristica simples sobre todas as
   // rawLines do PDF — ambos os formatos colocam isso no rodape de cada pagina.
