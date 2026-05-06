@@ -123,12 +123,18 @@ function findUnidadeNome(rawLines: string[]): string {
   return '';
 }
 
-// Tenta identificar o periodo "DD/MM/YYYY .. DD/MM/YYYY" no texto
+// Tenta identificar o periodo "DD/MM/YYYY .. DD/MM/YYYY" no texto.
+// Aceita as 3 variacoes que aparecem nos relatorios do Sponte:
+//   "Periodo do Lancamento entre: X e Y"  (Lancamentos do Caixa, Fluxo de Caixa)
+//   "Data de Pagamento entre: X e Y"      (Plano de Contas)
+//   "Periodo: X a Y"                       (formato generico)
+//
+// O texto pode quebrar em duas linhas (ex.: "...entre: 01/01/2026 e\n31/01/2026."),
+// entao concatenamos todas as rawLines em uma unica string para o regex.
 function findPeriodo(rawLines: string[]): { inicio: string; fim: string } {
-  for (const t of rawLines) {
-    const m = t.match(/Per[ií]odo[^:]*:\s*(\d{2}\/\d{2}\/\d{4})\s*(?:e|a|\-)\s*(\d{2}\/\d{2}\/\d{4})/i);
-    if (m) return { inicio: ptBRtoISO(m[1]), fim: ptBRtoISO(m[2]) };
-  }
+  const blob = rawLines.join(' ');
+  const m = blob.match(/(?:Per[ií]odo[^:]*|Data\s+de\s+Pagamento)[^:]*:\s*(\d{2}\/\d{2}\/\d{4})\s*(?:e|a|\-)\s*(\d{2}\/\d{2}\/\d{4})/i);
+  if (m) return { inicio: ptBRtoISO(m[1]), fim: ptBRtoISO(m[2]) };
   return { inicio: '', fim: '' };
 }
 
@@ -331,6 +337,70 @@ function parseLancamentosCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
 }
 
 // =============================================================================
+// FORMATO C: "Plano de Contas" (SPRel/Financeiro/PlanoDeContas.aspx)
+// =============================================================================
+//
+// Layout: cada categoria ocupa uma linha com 2 items no MESMO Y:
+//   X=30      "¯ ¯ ¯ ¯ <Categoria>....................."  (texto + dots de preench.)
+//   X≈515     "R$<valor>"                                  (valor right-aligned)
+//
+// Linhas de total ("Total do sub grupo:", "Total do grupo:", "Total de Despesas:")
+// devem ser ignoradas.
+//
+// Como o PDF so tem totais agregados (sem dia a dia), geramos UM lancamento
+// sintetico por categoria, datado no ULTIMO dia do periodo. O usuario fica
+// avisado que e um RESUMO (ver UI do modal).
+function parsePlanoDeContas(pages: PageItems[], dataAlvoISO: string): FluxoCaixaLancamento[] {
+  const lancamentos: FluxoCaixaLancamento[] = [];
+  const VAL_RX = /^R\$\s*(-?[\d.,]+)$/;
+  // Strip o prefixo de "¯ ¯ ¯ ¯ " (4 ou 6 baras superiores) e o sufixo de pontos.
+  const CAT_RX = /^\s*[¯\s]+(.+?)[\s\.]+$/;
+  // Linhas a ignorar (totais e cabecalhos)
+  const SKIP_RX = /^(Total\s+(do\s+(sub\s+)?grupo|de\s+Despesas)|Plano\s+de\s+Contas|Educacional|P[aá]gina|Tipo:|ETP|Valor\s+Arrecadado)/i;
+
+  for (const page of pages) {
+    for (const ln of page.lines) {
+      // Procura par {texto a esquerda, valor a direita} no mesmo Y.
+      const items = ln.filter(i => i.str.trim());
+      if (items.length < 2) continue;
+
+      // Acha o item de valor (R$X,XX) — geralmente o ultimo
+      const valItem = items.find(i => VAL_RX.test(i.str.trim()));
+      if (!valItem) continue;
+
+      // Acha o item de texto (categoria) — o item mais a esquerda que NAO e o valor
+      const txtItem = items.find(i => i !== valItem && i.str.trim().length > 0);
+      if (!txtItem) continue;
+
+      const txt = txtItem.str.trim();
+      if (SKIP_RX.test(txt)) continue;
+
+      // Extrai categoria e valor
+      const cm = txt.match(CAT_RX);
+      if (!cm) continue;
+      const categoria = cm[1].trim().replace(/\s+/g, ' ');
+      if (!categoria || /^Total/i.test(categoria)) continue;
+
+      const vm = valItem.str.trim().match(VAL_RX);
+      if (!vm) continue;
+      const valor = parseNumPtBR(vm[1]);
+      if (valor === 0) continue;
+
+      lancamentos.push({
+        data: dataAlvoISO,
+        dataRep: dataAlvoISO,
+        categoria,
+        tipo: 'S',
+        origemDestino: 'Resumo Plano de Contas',
+        valor: Math.abs(valor),
+      });
+    }
+  }
+
+  return lancamentos;
+}
+
+// =============================================================================
 // Detector de formato + entry point
 // =============================================================================
 
@@ -360,15 +430,10 @@ function detectarFormato(pages: PageItems[]): Formato {
   return 'desconhecido';
 }
 
-const ERROR_FORMATO_INVALIDO =
-  'Este PDF nao e um relatorio de lancamentos de caixa. ' +
-  'Por favor, exporte o relatorio "Lancamentos do Caixa" em ' +
-  URL_LANCAMENTOS_CAIXA + ' (Financeiro > Relatorios > Lancamentos do Caixa). ' +
-  'O relatorio "Plano de Contas" (resumo financeiro) nao serve para esta importacao.';
-
 const ERROR_FORMATO_DESCONHECIDO =
-  'Formato de PDF nao reconhecido. Por favor, exporte o relatorio "Lancamentos do Caixa" em ' +
-  URL_LANCAMENTOS_CAIXA + ' (Financeiro > Relatorios > Lancamentos do Caixa).';
+  'Formato de PDF nao reconhecido. Por favor, exporte um dos relatorios abaixo do Sponte:\n' +
+  '• "Lancamentos do Caixa" (granular, recomendado): ' + URL_LANCAMENTOS_CAIXA + '\n' +
+  '• "Plano de Contas" (resumo agregado por categoria) — Financeiro > Relatorios > Plano de Contas';
 
 export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatorio> {
   const pdfjsLib = await loadPdfJs();
@@ -378,29 +443,34 @@ export async function parseFluxoCaixaPDF(file: File): Promise<FluxoCaixaRelatori
   const pages = await extractPages(pdf);
   const formato = detectarFormato(pages);
 
-  if (formato === 'plano-de-contas') {
-    throw new UnsupportedReportError(ERROR_FORMATO_INVALIDO);
-  }
   if (formato === 'desconhecido') {
     throw new UnsupportedReportError(ERROR_FORMATO_DESCONHECIDO);
   }
 
-  const lancamentos = formato === 'lancamentos-caixa'
-    ? parseLancamentosCaixa(pages)
-    : parseFluxoCaixa(pages);
-
-  // Defesa: se o detector classificou como caixa mas o parser nao extraiu
-  // nada, o PDF provavelmente nao e o que o detector achou que era. Lanca
-  // erro com a mesma orientacao para evitar mensagem confusa de "vazio".
-  if (lancamentos.length === 0) {
-    throw new UnsupportedReportError(ERROR_FORMATO_DESCONHECIDO);
-  }
-
-  // Metadados (unidade + periodo) via heuristica simples sobre todas as
-  // rawLines do PDF — ambos os formatos colocam isso no rodape de cada pagina.
+  // Metadados (unidade + periodo) — todos os formatos suportados imprimem isso
+  // em algum lugar do rodape ou cabecalho.
   const allRawLines = pages.flatMap(p => p.rawLines);
   const unidadeNome = findUnidadeNome(allRawLines);
   const { inicio: periodoInicio, fim: periodoFim } = findPeriodo(allRawLines);
+
+  let lancamentos: FluxoCaixaLancamento[];
+  if (formato === 'lancamentos-caixa') {
+    lancamentos = parseLancamentosCaixa(pages);
+  } else if (formato === 'plano-de-contas') {
+    // Plano de Contas so tem totais agregados por categoria; geramos UM
+    // lancamento sintetico por categoria, datado no ULTIMO dia do periodo.
+    // (Se nao identificou periodo, usa hoje como fallback.)
+    const dataAlvo = periodoFim || new Date().toISOString().slice(0, 10);
+    lancamentos = parsePlanoDeContas(pages, dataAlvo);
+  } else {
+    lancamentos = parseFluxoCaixa(pages);
+  }
+
+  // Defesa: se o detector classificou mas o parser nao extraiu nada, o PDF
+  // provavelmente nao e o que o detector achou que era.
+  if (lancamentos.length === 0) {
+    throw new UnsupportedReportError(ERROR_FORMATO_DESCONHECIDO);
+  }
 
   const totalSaidas = lancamentos.filter(l => l.tipo === 'S').reduce((s, l) => s + l.valor, 0);
   const totalEntradas = lancamentos.filter(l => l.tipo === 'E').reduce((s, l) => s + l.valor, 0);

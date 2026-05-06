@@ -118,11 +118,11 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
           <div>
             <h2 className="text-base font-semibold">Importar Despesas pagas pelo Caixa</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Anexe o PDF do relatório <strong>Lançamentos do Caixa</strong> do Sponte
-              (<a href="https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx"
+              Anexe o PDF de um destes relatórios do Sponte:
+              {' '}<a href="https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx"
                  target="_blank" rel="noopener noreferrer"
-                 className="underline hover:text-foreground">Financeiro › Relatórios › Lançamentos do Caixa</a>).
-              O formato antigo "Fluxo de Caixa" também é aceito.
+                 className="underline hover:text-foreground"><strong>Lançamentos do Caixa</strong></a>
+              {' '}(granular, recomendado), <strong>Plano de Contas</strong> (resumo agregado por categoria) ou o legado <strong>Fluxo de Caixa</strong>.
             </p>
           </div>
           <button
@@ -257,6 +257,16 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                   </tfoot>
                 </table>
               </div>
+
+              {relatorio.lancamentos[0]?.origemDestino === 'Resumo Plano de Contas' && (
+                <div className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+                  <strong>Atenção — formato Plano de Contas (resumo agregado).</strong> Cada linha acima
+                  representa o TOTAL de uma categoria no período, datado em{' '}
+                  {fmtData(relatorio.periodoFim)} (último dia). Se a sincronização da API Sponte já trouxe os lançamentos
+                  individuais desta unidade neste período, importar este resumo VAI DUPLICAR os valores —
+                  use apenas quando a API não tem os dados.
+                </div>
+              )}
 
               <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 Ao importar, qualquer registro com <strong>forma_cobranca = CAIXA</strong> desta unidade no período{' '}
