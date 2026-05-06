@@ -138,8 +138,10 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
   const [syncError, setSyncError] = useState('');
   const [syncSuccess, setSyncSuccess] = useState('');
 
-  // Modal de importação de Caixa (PDF)
+  // Modal de importação de Caixa (PDF/XML)
   const [caixaModalOpen, setCaixaModalOpen] = useState(false);
+  // Banner de sucesso que persiste por alguns segundos depois do modal fechar
+  const [importToast, setImportToast] = useState<string>('');
 
   // Mapa de status: { [unidadeId]: { [YYYY-MM]: SyncMapEntry } }
   const [syncMap, setSyncMap] = useState<Record<string, Record<string, SyncMapEntry>>>({});
@@ -772,9 +774,29 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
             unidades={unidades}
             accentColor={accentColor}
             onClose={() => setCaixaModalOpen(false)}
-            onImportado={() => { loadSyncMap(); }}
+            onImportado={(msg) => {
+              loadSyncMap();
+              if (msg) {
+                setImportToast(msg);
+                // Auto-dismiss apos 7s
+                setTimeout(() => setImportToast(''), 7000);
+              }
+            }}
           />
         </Suspense>
+      )}
+
+      {/* Banner persistente de importacao concluida (aparece apos o modal fechar) */}
+      {importToast && (
+        <div className="fixed bottom-6 right-6 z-[10000] max-w-md bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-lg shadow-lg px-4 py-3 text-sm flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <span className="text-emerald-600 text-lg leading-none mt-0.5">✓</span>
+          <div className="flex-1">{importToast}</div>
+          <button
+            onClick={() => setImportToast('')}
+            className="text-emerald-700 hover:text-emerald-900 text-lg leading-none -mt-0.5"
+            aria-label="Fechar"
+          >×</button>
+        </div>
       )}
     </div>
   );

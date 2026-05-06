@@ -11,7 +11,11 @@ interface Props {
   unidades: Unidade[];
   accentColor: string;
   onClose: () => void;
-  onImportado: () => void;
+  /**
+   * Chamado apos importacao bem-sucedida. Recebe a mensagem de sucesso
+   * para que o pai possa exibir um banner persistente apos o modal fechar.
+   */
+  onImportado: (mensagem?: string) => void;
 }
 
 const fmtBR = (n: number) =>
@@ -93,16 +97,23 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         relatorio.periodoFim,
         relatorio.lancamentos
       );
-      setSucesso(
+      const mensagem =
         `Importação concluída: ${r.inseridos} lançamento(s) inseridos` +
         (r.removidosAntesDeInserir > 0
           ? ` (${r.removidosAntesDeInserir} registros anteriores do mesmo período foram substituídos)`
           : '') +
         (r.ignoradosPorDuplicidade > 0
           ? `, ${r.ignoradosPorDuplicidade} ignorado(s) por já existirem via API Sponte.`
-          : '.')
-      );
-      onImportado();
+          : '.');
+      setSucesso(mensagem);
+      // Notifica o pai com a mensagem para que ele possa exibir um banner/toast
+      // depois que o modal fechar (caso queira). Mantemos compat com a
+      // assinatura antiga (sem argumento).
+      onImportado(mensagem);
+      // Fecha o modal automaticamente apos curto delay para que o usuario veja
+      // o feedback de sucesso antes de voltar para a tela base. Sem isso, ele
+      // precisaria clicar "Fechar" manualmente.
+      setTimeout(() => onClose(), 1800);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao importar.');
     } finally {
