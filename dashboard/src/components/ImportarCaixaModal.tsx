@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { parseLancamentosFile, UnsupportedReportError, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
 import { importarLancamentosCaixa } from '@/api/fluxoCaixaImport';
 import type { Unidade } from '@/types';
@@ -42,6 +43,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [relatorio, setRelatorio] = useState<FluxoCaixaRelatorio | null>(null);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [unidadeId, setUnidadeId] = useState<string>('');
   const [error, setError] = useState('');
   const [sucesso, setSucesso] = useState('');
@@ -72,6 +74,9 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         throw new Error('Nenhum lançamento encontrado no PDF.');
       }
       setRelatorio(rel);
+      // Por padrao todos os lancamentos vem marcados; usuario pode desmarcar
+      // individualmente antes de importar.
+      setSelectedIndices(new Set(rel.lancamentos.map((_, i) => i)));
       const matchedId = matchUnidade(rel.unidadeNome);
       setUnidadeId(matchedId);
     } catch (e) {
@@ -87,6 +92,8 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
 
   const handleImport = async () => {
     if (!relatorio || !unidadeId) return;
+    const lancamentosSelecionados = relatorio.lancamentos.filter((_, i) => selectedIndices.has(i));
+    if (lancamentosSelecionados.length === 0) return;
     setImporting(true);
     setError('');
     setSucesso('');
@@ -95,7 +102,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         unidadeId,
         relatorio.periodoInicio,
         relatorio.periodoFim,
-        relatorio.lancamentos
+        lancamentosSelecionados
       );
       const mensagem =
         `Importação concluída: ${r.inseridos} lançamento(s) inseridos` +
@@ -188,7 +195,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                 <FileText size={16} className="text-muted-foreground flex-shrink-0" />
                 <span className="truncate flex-1">{file?.name}</span>
                 <button
-                  onClick={() => { setFile(null); setRelatorio(null); setUnidadeId(''); }}
+                  onClick={() => { setFile(null); setRelatorio(null); setUnidadeId(''); setSelectedIndices(new Set()); }}
                   className="text-xs text-muted-foreground hover:text-foreground"
                   disabled={importing}
                 >
@@ -223,51 +230,93 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                 </div>
               </div>
 
-              <div className="border border-border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Data</th>
-                      <th className="px-3 py-2 text-left">Categoria</th>
-                      <th className="px-3 py-2 text-center">E/S</th>
-                      <th className="px-3 py-2 text-right">Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {relatorio.lancamentos.map((l, i) => (
-                      <tr key={i} className="border-t border-border">
-                        <td className="px-3 py-1.5 text-xs">{fmtData(l.data)}</td>
-                        <td className="px-3 py-1.5">{l.categoria}</td>
-                        <td className="px-3 py-1.5 text-center text-xs font-semibold">
-                          <span className={cn(
-                            'inline-block px-1.5 py-0.5 rounded',
-                            l.tipo === 'S' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
-                          )}>{l.tipo}</span>
-                        </td>
-                        <td className={cn(
-                          'px-3 py-1.5 text-right tabular-nums',
-                          l.tipo === 'S' ? 'text-red-700' : 'text-emerald-700'
-                        )}>
-                          {l.tipo === 'S' ? '-' : '+'}{fmtBR(l.valor)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/30 border-t border-border font-semibold">
-                      <td colSpan={2} className="px-3 py-2 text-xs uppercase tracking-wider text-muted-foreground">
-                        {relatorio.totalRegistros} lançamento(s)
-                      </td>
-                      <td className="px-3 py-2 text-right text-xs text-emerald-700">
-                        +{fmtBR(relatorio.totalEntradas)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-xs text-red-700">
-                        -{fmtBR(relatorio.totalSaidas)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              {(() => {
+                const total = relatorio.lancamentos.length;
+                const selCount = selectedIndices.size;
+                const allChecked = total > 0 && selCount === total;
+                const someChecked = selCount > 0 && selCount < total;
+                const totalEntradasSel = relatorio.lancamentos.reduce(
+                  (s, l, i) => s + (selectedIndices.has(i) && l.tipo === 'E' ? l.valor : 0), 0);
+                const totalSaidasSel = relatorio.lancamentos.reduce(
+                  (s, l, i) => s + (selectedIndices.has(i) && l.tipo === 'S' ? l.valor : 0), 0);
+                const toggleAll = (v: boolean | 'indeterminate') => {
+                  if (v === true) setSelectedIndices(new Set(relatorio.lancamentos.map((_, i) => i)));
+                  else setSelectedIndices(new Set());
+                };
+                const toggleIdx = (i: number) => {
+                  setSelectedIndices(prev => {
+                    const next = new Set(prev);
+                    if (next.has(i)) next.delete(i); else next.add(i);
+                    return next;
+                  });
+                };
+                return (
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 w-10">
+                            <Checkbox
+                              checked={allChecked ? true : (someChecked ? 'indeterminate' : false)}
+                              onCheckedChange={toggleAll}
+                              disabled={importing}
+                              aria-label="Selecionar todos"
+                            />
+                          </th>
+                          <th className="px-3 py-2 text-left">Data</th>
+                          <th className="px-3 py-2 text-left">Categoria</th>
+                          <th className="px-3 py-2 text-center">E/S</th>
+                          <th className="px-3 py-2 text-right">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {relatorio.lancamentos.map((l, i) => {
+                          const checked = selectedIndices.has(i);
+                          return (
+                            <tr key={i} className={cn('border-t border-border', !checked && 'opacity-40')}>
+                              <td className="px-3 py-1.5">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={() => toggleIdx(i)}
+                                  disabled={importing}
+                                  aria-label={`Selecionar lançamento ${i + 1}`}
+                                />
+                              </td>
+                              <td className="px-3 py-1.5 text-xs">{fmtData(l.data)}</td>
+                              <td className="px-3 py-1.5">{l.categoria}</td>
+                              <td className="px-3 py-1.5 text-center text-xs font-semibold">
+                                <span className={cn(
+                                  'inline-block px-1.5 py-0.5 rounded',
+                                  l.tipo === 'S' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                                )}>{l.tipo}</span>
+                              </td>
+                              <td className={cn(
+                                'px-3 py-1.5 text-right tabular-nums',
+                                l.tipo === 'S' ? 'text-red-700' : 'text-emerald-700'
+                              )}>
+                                {l.tipo === 'S' ? '-' : '+'}{fmtBR(l.valor)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-muted/30 border-t border-border font-semibold">
+                          <td colSpan={3} className="px-3 py-2 text-xs uppercase tracking-wider text-muted-foreground">
+                            {selCount} de {total} selecionado(s)
+                          </td>
+                          <td className="px-3 py-2 text-right text-xs text-emerald-700">
+                            +{fmtBR(totalEntradasSel)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-xs text-red-700">
+                            -{fmtBR(totalSaidasSel)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              })()}
 
               {relatorio.lancamentos[0]?.origemDestino === 'Resumo Plano de Contas' && (
                 <div className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
@@ -281,7 +330,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
 
               <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 Ao importar, qualquer registro com <strong>forma_cobranca = CAIXA</strong> desta unidade no período{' '}
-                <strong>{fmtData(relatorio.periodoInicio)} a {fmtData(relatorio.periodoFim)}</strong> será substituído pelos lançamentos acima.
+                <strong>{fmtData(relatorio.periodoInicio)} a {fmtData(relatorio.periodoFim)}</strong> será substituído pelos lançamentos <strong>selecionados</strong> acima.
               </div>
             </>
           )}
@@ -308,7 +357,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
           </Button>
           <Button
             onClick={handleImport}
-            disabled={!relatorio || !unidadeId || importing}
+            disabled={!relatorio || !unidadeId || importing || selectedIndices.size === 0}
             className="gap-2 font-semibold"
             style={{ background: accentColor, boxShadow: `0 4px 14px -4px ${accentColor}66` }}
           >
