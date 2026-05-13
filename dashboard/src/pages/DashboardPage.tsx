@@ -63,6 +63,10 @@ const parseSponteXML = (xmlString: string): ParcelaPagar[] => {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+const MESES_STORAGE_KEY = 'etp.dashboard.mesesSelecionados';
+const CATEGORY_STORAGE_KEY = 'etp.dashboard.selectedCategory';
+const SITUATIONS_STORAGE_KEY = 'etp.dashboard.selectedSituations';
+const APENAS_F_STORAGE_KEY = 'etp.dashboard.apenasF';
 const fmtBRL = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const situationVariant = (sit: string): 'success' | 'error' | 'warning' | 'info' | 'category' => {
@@ -157,7 +161,22 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
   const mesAtual = new Date().getMonth(); // 0-based, usado no gráfico evolução mensal
 
   const mesesDisponiveis = getMesesAno();
-  const [mesesSelecionados, setMesesSelecionados] = useState<string[]>([getMesAtualKey()]);
+  const [mesesSelecionados, setMesesSelecionados] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(MESES_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string' && /^\d{4}-\d{2}$/.test(v))) {
+          return parsed;
+        }
+      }
+    } catch { /* ignore parse/storage errors */ }
+    return [getMesAtualKey()];
+  });
+  useEffect(() => {
+    try { localStorage.setItem(MESES_STORAGE_KEY, JSON.stringify(mesesSelecionados)); }
+    catch { /* quota/private-mode — ok ignorar */ }
+  }, [mesesSelecionados]);
   const [showMesDropdown, setShowMesDropdown]     = useState(false);
   const mesBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -167,10 +186,49 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
     [mesesSelecionados]
   );
 
-  const [selectedCategory, setSelectedCategory] = useState('Todas');
-  const [apenasF, setApenasF] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(CATEGORY_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'string') return parsed;
+      }
+    } catch { /* ignore */ }
+    return 'Todas';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(selectedCategory)); }
+    catch { /* ignore */ }
+  }, [selectedCategory]);
+  const [apenasF, setApenasF] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(APENAS_F_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'boolean') return parsed;
+      }
+    } catch { /* ignore */ }
+    return false;
+  });
+  useEffect(() => {
+    try { localStorage.setItem(APENAS_F_STORAGE_KEY, JSON.stringify(apenasF)); }
+    catch { /* ignore */ }
+  }, [apenasF]);
   const [favoritos, setFavoritos] = useState<Set<string>>(new Set());
-  const [selectedSituations, setSelectedSituations] = useState<string[]>([]);
+  const [selectedSituations, setSelectedSituations] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(SITUATIONS_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string')) return parsed;
+      }
+    } catch { /* ignore */ }
+    return [];
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SITUATIONS_STORAGE_KEY, JSON.stringify(selectedSituations)); }
+    catch { /* ignore */ }
+  }, [selectedSituations]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [catDropdownOpen, setCatDropdownOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
@@ -1343,12 +1401,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                     return { ...g, pct, cumul, classe };
                   });
 
-                  const fmtK = (v: number) => {
-                    const abs = Math.abs(v);
-                    if (abs >= 1_000_000) return `R$${(abs / 1_000_000).toFixed(1)}M`;
-                    if (abs >= 1_000) return `R$${(abs / 1_000).toFixed(1)}k`;
-                    return `R$${abs.toFixed(0)}`;
-                  };
+                  const fmtMoeda = (v: number) => `R$ ${fmtBRL(Math.abs(v))}`;
                   const classeCor: Record<'A' | 'B' | 'C', string> = { A: '#6366f1', B: '#f59e0b', C: '#94a3b8' };
                   const hexToRgba = (hex: string, alpha: number) => {
                     const m = hex.replace('#', '').match(/.{2}/g);
@@ -1364,7 +1417,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
 
                   return (
                     <div className="overflow-x-auto -mx-5 px-5">
-                      <table className="w-full border-collapse text-xs tabular-nums">
+                      <table className="w-full border-collapse text-[0.65rem] tabular-nums">
                         <thead>
                           <tr className="text-[0.6rem] font-semibold text-muted-foreground uppercase tracking-widest">
                             <th rowSpan={2} className="text-left px-2 py-2 sticky left-0 bg-background border-b border-border/40 min-w-[170px]">Grupo</th>
@@ -1403,8 +1456,8 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                                 const colBg = unidadeBg(u.cor);
                                 return (
                                   <React.Fragment key={`${idx}-${u.id}`}>
-                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtK(cell.plan)}</td>
-                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold" style={{ background: colBg }}>{fmtK(cell.real)}</td>
+                                    <td className="text-right px-2 py-1.5 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtMoeda(cell.plan)}</td>
+                                    <td className="text-right px-2 py-1.5 text-foreground font-semibold" style={{ background: colBg }}>{fmtMoeda(cell.real)}</td>
                                     <td className="text-right px-2 py-1.5 font-bold" style={{ background: colBg, color: pctColor }}>
                                       {pct === null ? '—' : `${Math.round(pct)}%`}
                                     </td>
@@ -1425,8 +1478,8 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                               const colBg = unidadeBg(u.cor, true);
                               return (
                                 <React.Fragment key={u.id}>
-                                  <td className="text-right px-2 py-2 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtK(totalPlan)}</td>
-                                  <td className="text-right px-2 py-2 text-foreground" style={{ background: colBg }}>{fmtK(totalReal)}</td>
+                                  <td className="text-right px-2 py-2 text-muted-foreground border-l border-border/30" style={{ background: colBg }}>{fmtMoeda(totalPlan)}</td>
+                                  <td className="text-right px-2 py-2 text-foreground" style={{ background: colBg }}>{fmtMoeda(totalReal)}</td>
                                   <td className="text-right px-2 py-2" style={{ background: colBg, color: pctColor }}>
                                     {pct === null ? '—' : `${Math.round(pct)}%`}
                                   </td>
