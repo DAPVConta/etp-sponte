@@ -229,25 +229,81 @@ function parseFluxoCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
 //
 // O total geral aparece numa linha final apenas com valor preenchido em X=441
 // e a contagem aparece como "Total de Registros: N".
-function parseLancamentosCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
-  // Coordenadas X de referencia para cada coluna (descobertas via inspecao do
-  // PDF). Tolerancia generosa para acomodar pequenas variacoes entre Sponte
-  // versions: largura util ~50px por coluna.
-  const COL = {
-    data:       { min:   0, max:  90 },
-    origem:     { min:  90, max: 260 },
-    categoria:  { min: 260, max: 430 },
-    valor:      { min: 430, max: 490 },
-    tipo:       { min: 490, max: 545 },
-    complemento:{ min: 545, max: 999 },
-  };
+type ColRanges = {
+  data:       { min: number; max: number };
+  origem:     { min: number; max: number };
+  categoria:  { min: number; max: number };
+  valor:      { min: number; max: number };
+  tipo:       { min: number; max: number };
+  complemento:{ min: number; max: number };
+};
 
+// Coordenadas X de fallback (layout "padrao" do Sponte que servia ate descobrirmos
+// que algumas unidades exportam com larguras diferentes — ex.: Gravata empurra
+// Valor para X~555 em vez de X~441). Usado apenas se nao acharmos cabecalho.
+const COL_FALLBACK: ColRanges = {
+  data:       { min:   0, max:  90 },
+  origem:     { min:  90, max: 260 },
+  categoria:  { min: 260, max: 430 },
+  valor:      { min: 430, max: 490 },
+  tipo:       { min: 490, max: 545 },
+  complemento:{ min: 545, max: 999 },
+};
+
+// Le as posicoes X dos labels do cabecalho ("Data", "Origem/Destino", "Categoria",
+// "Valor", "Tipo de", "Complemento") e infere os ranges de cada coluna como
+// [anchorX, proximoAnchorX). Retorna null se nao achar pelo menos 4 dos 6 labels.
+function detectarColunasLancamentos(page: PageItems): ColRanges | null {
+  // Agrupa items por Y arredondado e procura a linha com mais labels conhecidos.
+  const byY = new Map<number, TextItem[]>();
+  for (const it of page.items) {
+    const y = Math.round(it.y);
+    if (!byY.has(y)) byY.set(y, []);
+    byY.get(y)!.push(it);
+  }
+  type Anchors = Partial<Record<keyof ColRanges, number>>;
+  let best: { score: number; anchors: Anchors } = { score: 0, anchors: {} };
+  for (const row of byY.values()) {
+    const anchors: Anchors = {};
+    for (const it of row) {
+      const s = it.str;
+      if (anchors.data === undefined && /^Data(\s+Lan[çc]amento)?$/i.test(s)) anchors.data = it.x;
+      else if (anchors.origem === undefined && /^Origem\/Destino$/i.test(s)) anchors.origem = it.x;
+      else if (anchors.categoria === undefined && /^Categoria$/i.test(s)) anchors.categoria = it.x;
+      else if (anchors.valor === undefined && /^Valor$/i.test(s)) anchors.valor = it.x;
+      else if (anchors.tipo === undefined && /^Tipo(\s+de)?$/i.test(s)) anchors.tipo = it.x;
+      else if (anchors.complemento === undefined && /^Complemento$/i.test(s)) anchors.complemento = it.x;
+    }
+    const score = Object.keys(anchors).length;
+    if (score > best.score) best = { score, anchors };
+  }
+  if (best.score < 4) return null;
+  const a = best.anchors;
+  // Para colunas faltantes (raro), interpolamos com o fallback proporcional.
+  const xs: Array<[keyof ColRanges, number]> = [];
+  (['data','origem','categoria','valor','tipo','complemento'] as const).forEach(k => {
+    if (a[k] !== undefined) xs.push([k, a[k]!]);
+  });
+  xs.sort((p, q) => p[1] - q[1]);
+  const ranges: ColRanges = { ...COL_FALLBACK };
+  for (let i = 0; i < xs.length; i++) {
+    const [k, x] = xs[i];
+    const nextX = i + 1 < xs.length ? xs[i + 1][1] : 9999;
+    // tolerancia esquerda de 2px: numeros podem comecar levemente antes do anchor
+    const min = i === 0 ? 0 : Math.max(0, x - 2);
+    ranges[k] = { min, max: nextX };
+  }
+  return ranges;
+}
+
+function parseLancamentosCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
   // Regex da data (anchor de cada row)
   const DATE_RX = /^\d{2}\/\d{2}\/\d{4}$/;
 
   const lancamentos: FluxoCaixaLancamento[] = [];
 
   for (const page of pages) {
+    const COL: ColRanges = detectarColunasLancamentos(page) ?? COL_FALLBACK;
     // Junta items por Y com tolerancia 1px. Para cada Y, identificamos qual
     // coluna o item ocupa pelo X e montamos a linha. Items com Y "filho" (Tipo
     // quebrado em "Pay") sao concatenados ao Y anchor (linha imediatamente
