@@ -18,6 +18,9 @@ import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+const MESES_STORAGE_KEY = 'etp.dashboardReceitas.mesesSelecionados';
+const CATEGORY_STORAGE_KEY = 'etp.dashboardReceitas.selectedCategory';
+const SITUATIONS_STORAGE_KEY = 'etp.dashboardReceitas.selectedSituations';
 const fmtBRL = (v: number) =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -103,7 +106,22 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
   const [receitasPorGrupo, setReceitasPorGrupo] = useState<Record<string, Set<string>>>({});
 
   const mesesDisponiveis = getMesesAno();
-  const [mesesSelecionados, setMesesSelecionados] = useState<string[]>([getMesAtualKey()]);
+  const [mesesSelecionados, setMesesSelecionados] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(MESES_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string' && /^\d{4}-\d{2}$/.test(v))) {
+          return parsed;
+        }
+      }
+    } catch { /* ignore */ }
+    return [getMesAtualKey()];
+  });
+  useEffect(() => {
+    try { localStorage.setItem(MESES_STORAGE_KEY, JSON.stringify(mesesSelecionados)); }
+    catch { /* ignore */ }
+  }, [mesesSelecionados]);
   const [showMesDropdown, setShowMesDropdown]     = useState(false);
   const mesBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -112,8 +130,34 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
     [mesesSelecionados]
   );
 
-  const [selectedCategory, setSelectedCategory]   = useState('Todas');
-  const [selectedSituations, setSelectedSituations] = useState<string[]>([]);
+  const [selectedCategory, setSelectedCategory]   = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(CATEGORY_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'string') return parsed;
+      }
+    } catch { /* ignore */ }
+    return 'Todas';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(selectedCategory)); }
+    catch { /* ignore */ }
+  }, [selectedCategory]);
+  const [selectedSituations, setSelectedSituations] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(SITUATIONS_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string')) return parsed;
+      }
+    } catch { /* ignore */ }
+    return [];
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SITUATIONS_STORAGE_KEY, JSON.stringify(selectedSituations)); }
+    catch { /* ignore */ }
+  }, [selectedSituations]);
   const [dropdownOpen, setDropdownOpen]           = useState(false);
   const [catDropdownOpen, setCatDropdownOpen]     = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
