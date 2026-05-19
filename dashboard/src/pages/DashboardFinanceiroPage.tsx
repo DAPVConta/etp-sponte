@@ -83,14 +83,15 @@ const mesesAte = (mesRef: string, n: number): { key: string; mes: number; ano: n
   return arr;
 };
 
-// Gera lista de meses disponiveis no filtro (ultimos 24 meses, excluindo mes corrente)
+// Gera lista de meses disponiveis no filtro (mes corrente + 24 meses anteriores).
+// O mes corrente nao e o default (a metrica "Resultado do mes" prefere o ultimo
+// mes fechado), mas fica disponivel na lista para o usuario inspecionar.
 const mesesDisponiveis = (): { value: string; label: string }[] => {
   const d = hojeZero();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);                 // comeca no mes anterior
+  d.setDate(1);                                  // comeca no mes corrente
   const MESES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
   const arr: { value: string; label: string }[] = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 25; i++) {
     const dd = new Date(d.getFullYear(), d.getMonth() - i, 1);
     arr.push({ value: ym(dd), label: `${MESES_FULL[dd.getMonth()]} ${dd.getFullYear()}` });
   }
