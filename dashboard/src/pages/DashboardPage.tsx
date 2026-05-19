@@ -592,9 +592,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       return {
         name:      label,
         value:     agg[mesKey] || 0,
-        planejado:         hasPlan && i <= mesAtual ? plan : null,
-        planejadoProj:     hasPlan && i >= mesAtual - 1 ? plan : null,
-        planejadoProjLbl:  hasPlan && i > mesAtual ? plan : null,
+        planejado: hasPlan && i <= mesAtual ? plan : null,
       };
     });
   }, [data, selectedCategory, selectedSituations, planejamentoMensal]);
@@ -622,8 +620,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       const plan = planejamentoMensal[mesKey];
       const hasPlan = plan != null && plan > 0;
       const mesAtual = new Date().getMonth();
-      entry.planejado     = hasPlan && i <= mesAtual ? plan : null;
-      entry.planejadoProj = hasPlan && i >= mesAtual ? plan : null;
+      entry.planejado = hasPlan && i <= mesAtual ? plan : null;
       return entry;
     });
   }, [activeUnidade, unidades, realizadoAnual, selectedCategory, despesasPorGrupo, planejamentoMensal]);
@@ -911,7 +908,6 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                             formatter={(value, name) => {
                               if (value == null || value === 0) return [null, null];
                               if (name === 'planejado') return [`R$ ${fmtBRL(Number(value))}`, 'Planejado'];
-                              if (name === 'planejadoProj') return [`R$ ${fmtBRL(Number(value))}`, 'Projeção'];
                               if (isStacked) {
                                 const u = unidades.find(u => u.id === name);
                                 return [`R$ ${fmtBRL(Number(value))}`, u?.nome || String(name)];
@@ -949,36 +945,6 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                               formatter={(v: unknown) => v != null && Number(v) > 0 ? fmtCompact(v) : ''}
                               fill={planColor} fontSize={10} fontWeight={700} />
                           </Line>
-                          <Line dataKey="planejadoProj" type="monotone" stroke={planColor} strokeWidth={2}
-                            strokeDasharray="6 4"
-                            dot={(props: Record<string, unknown>) => {
-                              const idx = props.index as number;
-                              if (idx <= mesAtual) return <g key={`proj-dot-${idx}`} />;
-                              return <circle key={`proj-dot-${idx}`} cx={props.cx as number} cy={props.cy as number} r={3} fill={planColor} stroke="#ffffff" strokeWidth={2} />;
-                            }}
-                            activeDot={{ r: 5, fill: planColor, stroke: '#fff', strokeWidth: 2 }}
-                            connectNulls={true} name="planejadoProj">
-                            <LabelList
-                              content={(rawProps: unknown) => { const props = rawProps as Record<string, unknown>;
-                                const payload = props.value as Record<string, unknown> | undefined;
-                                const lbl = payload?.planejadoProjLbl;
-                                if (lbl == null || Number(lbl) <= 0) return null;
-                                return (
-                                  <text
-                                    key={`proj-lbl-${props.index}`}
-                                    x={props.x as number}
-                                    y={(props.y as number) + 16}
-                                    textAnchor="middle"
-                                    fill={planColor}
-                                    fontSize={10}
-                                    fontWeight={700}
-                                  >
-                                    {fmtCompact(lbl)}
-                                  </text>
-                                );
-                              }}
-                            />
-                          </Line>
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
@@ -990,10 +956,6 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
                       <span className="flex items-center gap-1.5">
                         <svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke={planColor} strokeWidth="2" /></svg>
                         Planejado
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke={planColor} strokeWidth="2" strokeDasharray="4 3" /></svg>
-                        Projeção
                       </span>
                     </div>
                     </>
