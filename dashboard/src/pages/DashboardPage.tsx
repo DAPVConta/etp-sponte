@@ -592,7 +592,11 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       return {
         name:      label,
         value:     agg[mesKey] || 0,
-        planejado: hasPlan && i <= mesAtual ? plan : null,
+        // Planejado so aparece em meses ja fechados (i < mesAtual). No mes
+        // corrente o realizado ainda esta incompleto, entao mostrar a linha
+        // de Planejado dali seria comparar um numero parcial com a meta — vira
+        // "projecao", que ja foi removida intencionalmente.
+        planejado: hasPlan && i < mesAtual ? plan : null,
       };
     });
   }, [data, selectedCategory, selectedSituations, planejamentoMensal]);
@@ -620,7 +624,8 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       const plan = planejamentoMensal[mesKey];
       const hasPlan = plan != null && plan > 0;
       const mesAtual = new Date().getMonth();
-      entry.planejado = hasPlan && i <= mesAtual ? plan : null;
+      // Mesma logica do monthlyDataArray: Planejado so em meses fechados.
+      entry.planejado = hasPlan && i < mesAtual ? plan : null;
       return entry;
     });
   }, [activeUnidade, unidades, realizadoAnual, selectedCategory, despesasPorGrupo, planejamentoMensal]);
