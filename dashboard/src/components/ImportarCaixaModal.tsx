@@ -45,6 +45,10 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
   const [relatorio, setRelatorio] = useState<FluxoCaixaRelatorio | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [unidadeId, setUnidadeId] = useState<string>('');
+  // Unidade reconhecida automaticamente pelo cabecalho do relatorio. Guardada
+  // separada do unidadeId (que o usuario pode trocar) para detectar divergencia.
+  const [detectedUnidadeId, setDetectedUnidadeId] = useState<string>('');
+  const [confirmarDivergencia, setConfirmarDivergencia] = useState(false);
   const [error, setError] = useState('');
   const [sucesso, setSucesso] = useState('');
 
@@ -79,6 +83,8 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
       setSelectedIndices(new Set(rel.lancamentos.map((_, i) => i)));
       const matchedId = matchUnidade(rel.unidadeNome);
       setUnidadeId(matchedId);
+      setDetectedUnidadeId(matchedId);
+      setConfirmarDivergencia(false);
     } catch (e) {
       if (e instanceof UnsupportedReportError) {
         setError(e.message);
@@ -90,8 +96,17 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
     }
   };
 
+  // Divergencia: a unidade escolhida e diferente da reconhecida no relatorio.
+  // Quando detectada, exige confirmacao explicita antes de importar para
+  // evitar gravar os dados de um relatorio na unidade errada.
+  const unidadeDivergente = !!detectedUnidadeId && !!unidadeId && unidadeId !== detectedUnidadeId;
+  const detectadaNaoEncontrada = !!relatorio && !detectedUnidadeId;
+  const nomeUnidadeSelecionada = unidades.find(u => u.id === unidadeId)?.nome ?? '';
+  const nomeUnidadeDetectada = unidades.find(u => u.id === detectedUnidadeId)?.nome ?? '';
+
   const handleImport = async () => {
     if (!relatorio || !unidadeId) return;
+    if (unidadeDivergente && !confirmarDivergencia) return;
     const lancamentosSelecionados = relatorio.lancamentos.filter((_, i) => selectedIndices.has(i));
     if (lancamentosSelecionados.length === 0) return;
     setImporting(true);
@@ -195,7 +210,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                 <FileText size={16} className="text-muted-foreground flex-shrink-0" />
                 <span className="truncate flex-1">{file?.name}</span>
                 <button
-                  onClick={() => { setFile(null); setRelatorio(null); setUnidadeId(''); setSelectedIndices(new Set()); }}
+                  onClick={() => { setFile(null); setRelatorio(null); setUnidadeId(''); setDetectedUnidadeId(''); setConfirmarDivergencia(false); setSelectedIndices(new Set()); }}
                   className="text-xs text-muted-foreground hover:text-foreground"
                   disabled={importing}
                 >
@@ -229,6 +244,34 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                   </div>
                 </div>
               </div>
+
+              {/* Trava: unidade escolhida diverge da reconhecida no relatorio */}
+              {unidadeDivergente && (
+                <div className="text-xs text-red-800 bg-red-50 border border-red-300 rounded-lg px-3 py-2.5 space-y-2">
+                  <div>
+                    <strong>⚠️ Atenção — divergência de unidade.</strong> O relatório é da unidade{' '}
+                    <strong>"{relatorio.unidadeNome || nomeUnidadeDetectada}"</strong>, mas você selecionou{' '}
+                    <strong>"{nomeUnidadeSelecionada}"</strong>. Importar assim vai gravar estes lançamentos
+                    na unidade <strong>errada</strong>.
+                  </div>
+                  <label className="flex items-center gap-2 font-medium cursor-pointer">
+                    <Checkbox
+                      checked={confirmarDivergencia}
+                      onCheckedChange={(v) => setConfirmarDivergencia(v === true)}
+                      disabled={importing}
+                    />
+                    Estou ciente e quero importar para "{nomeUnidadeSelecionada}" mesmo assim.
+                  </label>
+                </div>
+              )}
+
+              {/* Detecção falhou: nenhuma unidade reconhecida no relatorio */}
+              {detectadaNaoEncontrada && (
+                <div className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+                  <strong>Não reconheci a unidade pelo relatório</strong> (cabeçalho: "{relatorio.unidadeNome || '—'}").
+                  Selecione manualmente a unidade correta acima antes de importar — confira com atenção.
+                </div>
+              )}
 
               {(() => {
                 const total = relatorio.lancamentos.length;
@@ -357,7 +400,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
           </Button>
           <Button
             onClick={handleImport}
-            disabled={!relatorio || !unidadeId || importing || selectedIndices.size === 0}
+            disabled={!relatorio || !unidadeId || importing || selectedIndices.size === 0 || (unidadeDivergente && !confirmarDivergencia)}
             className="gap-2 font-semibold"
             style={{ background: accentColor, boxShadow: `0 4px 14px -4px ${accentColor}66` }}
           >
