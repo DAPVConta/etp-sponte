@@ -311,9 +311,16 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       .finally(() => setLoadingAnual(false));
   }, [unidades]);
 
-  // Carregar grupos do plano de contas para o filtro de categorias
+  // Carregar grupos do plano de contas para o filtro de categorias.
+  // IMPORTANTE: sempre carrega TODAS as unidades, independente do filtro de
+  // unidade ativo. A tabela "Plano x Realizado por unidade" e cross-unidade e
+  // classifica o Realizado (que vem com a categoria em texto puro) consultando
+  // este dicionario categoria->grupo. Se carregassemos so a unidade ativa, o
+  // Realizado das OUTRAS unidades seria classificado com o dicionario errado e
+  // categorias nao reconhecidas sumiriam do total — fazendo o total mudar so
+  // de trocar o filtro de unidade. Usar a uniao de todas evita isso.
   useEffect(() => {
-    const ids = activeUnidade ? [activeUnidade.id] : unidades.map(u => u.id);
+    const ids = unidades.map(u => u.id);
     if (!ids.length) return;
     Promise.all(ids.map(id => PlanoContasAPI.listarPorUnidade(id).catch(() => [])))
       .then(results => {
@@ -332,7 +339,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
         setDespesasPorGrupo(despMap);
       })
       .catch(console.error);
-  }, [activeUnidade, unidades]);
+  }, [unidades]);
 
   const loadDataFromDB = useCallback(async () => {
     setLoading(true);
