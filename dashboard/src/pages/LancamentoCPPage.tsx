@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Receipt, RefreshCw, AlertCircle, Search, FileText } from 'lucide-react';
 import type { Unidade } from '../types';
 import { ContasPagarAPI, type LancamentoCP } from '../api/contasPagar';
+import { PlanoContasAPI } from '../api/planoContas';
 import RelatorioCPModal from './RelatorioCPModal';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,8 @@ function fmtDateBR(iso: string | null) {
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
 }
+const normCat = (s: string) =>
+  (s || '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
 
 function getMesesAno(): { value: string; label: string }[] {
   const ano = new Date().getFullYear();
@@ -42,8 +45,22 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
   const [mes, setMes]                 = useState<string>('');
   const [situacao, setSituacao]       = useState<string>('');
   const [categoria, setCategoria]     = useState<string>('');
+  const [grupo, setGrupo]             = useState<string>('');
   const [search, setSearch]           = useState('');
   const [relatorioAberto, setRelatorioAberto] = useState(false);
+
+  // Matriz global de grupos (etp_plano_contas_matriz) — grupos ativos + mapa
+  // categoria -> grupo. Carregada uma vez; nao depende de unidade.
+  const [grupos, setGrupos] = useState<string[]>([]);
+  const [categoriaToGrupo, setCategoriaToGrupo] = useState<Record<string, string>>({});
+  useEffect(() => {
+    PlanoContasAPI.listarMatrizGrupos()
+      .then(({ grupos, categoriaToGrupo }) => {
+        setGrupos(grupos);
+        setCategoriaToGrupo(categoriaToGrupo);
+      })
+      .catch(() => {});
+  }, []);
 
   const unidadeIds = useMemo(
     () => (activeUnidade ? [activeUnidade.id] : unidades.map(u => u.id)),
@@ -95,14 +112,20 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
   }, [lancamentos]);
 
   const filtrados = useMemo(() => {
+    let arr = lancamentosOrdenados;
+    if (grupo) {
+      arr = arr.filter(l => categoriaToGrupo[normCat(l.categoria)] === grupo);
+    }
     const q = search.trim().toLowerCase();
-    if (!q) return lancamentosOrdenados;
-    return lancamentosOrdenados.filter(l =>
-      l.sacado.toLowerCase().includes(q) ||
-      l.categoria.toLowerCase().includes(q) ||
-      l.numeroParcela.toLowerCase().includes(q)
-    );
-  }, [lancamentosOrdenados, search]);
+    if (q) {
+      arr = arr.filter(l =>
+        l.sacado.toLowerCase().includes(q) ||
+        l.categoria.toLowerCase().includes(q) ||
+        l.numeroParcela.toLowerCase().includes(q)
+      );
+    }
+    return arr;
+  }, [lancamentosOrdenados, search, grupo, categoriaToGrupo]);
 
   // Opções de situação e categoria — derivadas do universo da empresa (sem filtro de situacao/categoria)
   const [opcoes, setOpcoes] = useState<{ situacoes: string[]; categorias: string[] }>({ situacoes: [], categorias: [] });
@@ -133,7 +156,7 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
           <h1 className="text-[1.75rem] font-extrabold tracking-tight flex items-center gap-3" style={{ color: accentColor }}>
             <Receipt size={26} /> Lançamento CP
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Contas a pagar lançadas — filtre por unidade, mês, situação e categoria.</p>
+          <p className="text-muted-foreground text-sm mt-1">Contas a pagar lançadas — filtre por unidade, mês, situação, grupo e categoria.</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && (
@@ -194,6 +217,18 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
           >
             <option value="">Todas</option>
             {opcoes.situacoes.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <div className="w-px h-5 bg-border/60" />
+
+          <span className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Grupo</span>
+          <select
+            value={grupo}
+            onChange={e => setGrupo(e.target.value)}
+            className="h-8 rounded-lg border border-border bg-white px-2 text-xs font-medium focus:border-primary focus:outline-none min-w-[160px]"
+          >
+            <option value="">Todos</option>
+            {grupos.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
 
           <div className="w-px h-5 bg-border/60" />
