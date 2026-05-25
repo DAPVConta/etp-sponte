@@ -58,12 +58,18 @@ const ym = (d: Date | string): string => {
 
 const hojeZero = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
 
-// Mes anterior ao corrente (ultimo mes fechado)
-const getMesRefDefault = (): string => {
-  const d = hojeZero();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return ym(d);
+const MESREF_STORAGE_KEY = 'etp.dashboardFinanceiro.mesRef';
+
+// Mes corrente (YYYY-MM) — default ao abrir o dashboard pela 1a vez.
+const getMesCorrente = (): string => ym(hojeZero());
+
+// Le o mes salvo no localStorage; se nao houver (ou invalido), usa o mes corrente.
+const getMesRefInicial = (): string => {
+  try {
+    const raw = localStorage.getItem(MESREF_STORAGE_KEY);
+    if (raw && /^\d{4}-\d{2}$/.test(raw)) return raw;
+  } catch { /* ignore */ }
+  return getMesCorrente();
 };
 
 // Constroi lista de meses (YYYY-MM) terminando em mesRef e voltando N meses
@@ -148,8 +154,13 @@ export default function DashboardFinanceiroPage({ activeUnidade, unidades, accen
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Mes de referencia (ultimo fechado). Default = mes anterior.
-  const [mesRef, setMesRef] = useState<string>(getMesRefDefault);
+  // Mes de referencia. Abre no mes corrente na 1a vez; depois guarda a ultima
+  // selecao no localStorage e restaura ao voltar de outro modulo.
+  const [mesRef, setMesRef] = useState<string>(getMesRefInicial);
+  useEffect(() => {
+    try { localStorage.setItem(MESREF_STORAGE_KEY, mesRef); }
+    catch { /* ignore */ }
+  }, [mesRef]);
   const [showMesDropdown, setShowMesDropdown] = useState(false);
   const mesContainerRef = useRef<HTMLDivElement>(null);
 
