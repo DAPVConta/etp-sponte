@@ -25,6 +25,37 @@ const fmtData = (iso: string) => {
   return `${d}/${m}/${y}`;
 };
 
+// Normaliza para comparacao: minusculo, sem acento, alfanumerico separado por espaco.
+function norm(s: string): string {
+  return (s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// Palavras genericas que nao ajudam a distinguir a unidade.
+const STOP = new Set(['unidade', 'etp', 'escola', 'tecnica', 'particular', 'de', 'da', 'do', 'ltda', 'me', 'dk']);
+
+// O relatorio "Relacao de Contas Pagas/Recebidas" NAO traz o nome da unidade no
+// conteudo do PDF — entao reconhecemos a unidade pelo NOME DO ARQUIVO
+// (ex.: "RelacaoPagasHistorico_DK_PAULISTA.pdf" -> "Qualitrainer Paulista").
+// Casa o(s) token(s) distintivo(s) do nome da unidade contra o nome do arquivo
+// e escolhe a unidade com mais tokens encontrados.
+function detectarUnidadePorArquivo(fileName: string, unidades: Unidade[]): string {
+  const fn = norm(fileName);
+  if (!fn) return '';
+  let melhorId = '';
+  let melhorScore = 0;
+  for (const u of unidades) {
+    const tokens = norm(u.nome).split(' ').filter(t => t.length >= 3 && !STOP.has(t));
+    let score = 0;
+    for (const t of tokens) {
+      if (fn.split(' ').includes(t)) score++;
+    }
+    if (score > melhorScore) { melhorScore = score; melhorId = u.id; }
+  }
+  return melhorScore > 0 ? melhorId : '';
+}
+
 export default function ImportarRelatorioModal({ unidades, accentColor, onClose, onImportado }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -33,6 +64,8 @@ export default function ImportarRelatorioModal({ unidades, accentColor, onClose,
   const [relatorio, setRelatorio] = useState<RelacaoContasRelatorio | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [unidadeId, setUnidadeId] = useState<string>('');
+  // True quando a unidade foi reconhecida automaticamente pelo nome do arquivo.
+  const [detectadaPorArquivo, setDetectadaPorArquivo] = useState(false);
   const [error, setError] = useState('');
   const [sucesso, setSucesso] = useState('');
 
@@ -49,6 +82,10 @@ export default function ImportarRelatorioModal({ unidades, accentColor, onClose,
       }
       setRelatorio(rel);
       setSelectedIndices(new Set(rel.itens.map((_, i) => i)));
+      // Reconhece a unidade pelo nome do arquivo (o PDF nao identifica a unidade).
+      const detectadaId = detectarUnidadePorArquivo(f.name, unidades);
+      setUnidadeId(detectadaId);
+      setDetectadaPorArquivo(!!detectadaId);
     } catch (e) {
       if (e instanceof UnsupportedReportError) setError(e.message);
       else setError(e instanceof Error ? e.message : 'Falha ao ler o PDF.');
@@ -160,7 +197,7 @@ export default function ImportarRelatorioModal({ unidades, accentColor, onClose,
                   {tipoLabel}
                 </span>
                 <button
-                  onClick={() => { setFile(null); setRelatorio(null); setSelectedIndices(new Set()); }}
+                  onClick={() => { setFile(null); setRelatorio(null); setSelectedIndices(new Set()); setUnidadeId(''); setDetectadaPorArquivo(false); }}
                   className="text-xs text-muted-foreground hover:text-foreground"
                   disabled={importing}
                 >
@@ -172,10 +209,13 @@ export default function ImportarRelatorioModal({ unidades, accentColor, onClose,
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
                     Unidade <span className="text-red-500">*</span>
+                    {detectadaPorArquivo && (
+                      <span className="ml-1 normal-case text-emerald-600 font-normal">(reconhecida pelo arquivo)</span>
+                    )}
                   </label>
                   <select
                     value={unidadeId}
-                    onChange={e => setUnidadeId(e.target.value)}
+                    onChange={e => { setUnidadeId(e.target.value); setDetectadaPorArquivo(false); }}
                     disabled={importing}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm"
                   >
@@ -195,11 +235,18 @@ export default function ImportarRelatorioModal({ unidades, accentColor, onClose,
                 </div>
               </div>
 
-              {/* O relatorio nao traz o nome da unidade — exige selecao manual */}
+              {/* O relatorio nao traz o nome da unidade no conteudo do PDF: ela e
+                  reconhecida pelo nome do arquivo. Confirma/avisa conforme o caso. */}
+              {detectadaPorArquivo && unidadeId && (
+                <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-300 rounded-lg px-3 py-2">
+                  <strong>Unidade reconhecida pelo nome do arquivo:</strong> {nomeUnidadeSelecionada}.
+                  Confira se está correta antes de importar — se precisar, troque no campo acima.
+                </div>
+              )}
               {!unidadeId && (
                 <div className="text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
-                  <strong>Selecione a unidade.</strong> Este relatório não identifica a unidade no PDF —
-                  confira que você está importando para a unidade correta.
+                  <strong>Selecione a unidade.</strong> Não reconheci a unidade pelo nome do arquivo
+                  (o PDF não traz essa informação). Selecione manualmente a unidade correta.
                 </div>
               )}
 
