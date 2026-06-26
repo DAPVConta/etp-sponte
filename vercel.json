@@ -4,6 +4,6 @@
   "installCommand": "echo skip",
   "rewrites": [
     { "source": "/api-sponte/:path*", "destination": "https://api.sponteeducacional.net.br/:path*" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ]
 }

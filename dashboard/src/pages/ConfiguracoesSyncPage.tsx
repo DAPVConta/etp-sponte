@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
+import { lazyWithReload } from '@/lib/lazyWithReload';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
@@ -15,8 +16,9 @@ import { parseParcelasReceberXML } from '@/lib/sponteXmlParser';
 
 // Carregamento sob demanda — o modal puxa o parser de PDF (pdfjs ~1.4MB),
 // que só faz sentido baixar quando o usuário decide importar fluxo de caixa.
-const ImportarCaixaModal = lazy(() => import('@/components/ImportarCaixaModal'));
-const ImportarRelatorioModal = lazy(() => import('@/components/ImportarRelatorioModal'));
+// lazyWithReload recupera do erro de chunk desatualizado apos um novo deploy.
+const ImportarCaixaModal = lazyWithReload(() => import('@/components/ImportarCaixaModal'));
+const ImportarRelatorioModal = lazyWithReload(() => import('@/components/ImportarRelatorioModal'));
 
 type SyncType = 'cp' | 'cr';
 
