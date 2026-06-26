@@ -83,8 +83,16 @@ const parseNumPtBR = (raw: string): number => {
   return isNaN(n) ? 0 : Math.abs(n);
 };
 
-// Faixas de X de cada coluna (validadas nos relatorios reais Paulista/Goiana).
-const COL = {
+// Os dois relatorios tem layouts de coluna DIFERENTES:
+//   - "Contas Pagas":     Nº | Fornecedor | Banco | Histórico | Venc | Data Pgto | Valor
+//   - "Contas Recebidas": Nº | Aluno      | Banco | Venc | Data Pgto | Valor  (sem Histórico,
+//                         colunas mais a esquerda)
+// Por isso as colunas sao detectadas dinamicamente a partir do cabecalho (ver
+// detectarColunas); o layout fixo abaixo e apenas fallback (Contas Pagas).
+type ColKey = 'num' | 'forn' | 'banco' | 'hist' | 'venc' | 'pgto' | 'valor';
+type ColRanges = Partial<Record<ColKey, { min: number; max: number }>>;
+
+const COL_FALLBACK: ColRanges = {
   num:    { min:   0, max:  55 },
   forn:   { min:  55, max: 280 },
   banco:  { min: 280, max: 415 },
@@ -93,16 +101,58 @@ const COL = {
   pgto:   { min: 688, max: 758 },
   valor:  { min: 758, max: 9999 },
 };
-function colOf(x: number): keyof typeof COL | null {
-  for (const k of Object.keys(COL) as Array<keyof typeof COL>) {
-    if (x >= COL[k].min && x < COL[k].max) return k;
+
+function colOf(x: number, COL: ColRanges): ColKey | null {
+  for (const k of Object.keys(COL) as ColKey[]) {
+    const r = COL[k]!;
+    if (x >= r.min && x < r.max) return k;
   }
   return null;
 }
 
+// Labels do cabecalho -> coluna. A ordem importa (primeiro match vence).
+const COL_LABELS: Array<[ColKey, RegExp]> = [
+  ['num',   /^N[ºo]\.?\s*Lan[çc]/i],
+  ['forn',  /(Fornecedor|Aluno|Sacado|Cliente)/i],
+  ['banco', /^Banco$/i],
+  ['hist',  /^Hist[óo]rico$/i],
+  ['venc',  /^Venc/i],
+  ['pgto',  /^Data\s+(Pgto|Rec)/i],
+  ['valor', /^Valor\s+(Pago|Recebido)/i],
+];
+
+// Le os anchors X dos labels na linha-cabecalho (a que casa mais labels) e
+// constroi as faixas de cada coluna usando o PONTO MEDIO entre anchors vizinhos
+// — robusto a valores monetarios alinhados a direita (que comecam mais a
+// esquerda quanto maiores). Retorna null se achar menos de 4 labels.
+function detectarColunas(lines: Line[]): ColRanges | null {
+  let best: { score: number; anchors: Partial<Record<ColKey, number>> } = { score: 0, anchors: {} };
+  for (const ln of lines) {
+    const anchors: Partial<Record<ColKey, number>> = {};
+    for (const it of ln.items) {
+      for (const [col, rx] of COL_LABELS) {
+        if (anchors[col] === undefined && rx.test(it.str)) { anchors[col] = it.x; break; }
+      }
+    }
+    const score = Object.keys(anchors).length;
+    if (score > best.score) best = { score, anchors };
+  }
+  if (best.score < 4) return null;
+  const xs = (Object.entries(best.anchors) as Array<[ColKey, number]>).sort((a, b) => a[1] - b[1]);
+  const mid = (a: number, b: number) => (a + b) / 2;
+  const ranges: ColRanges = {};
+  for (let i = 0; i < xs.length; i++) {
+    const [col, x] = xs[i];
+    const min = i === 0 ? 0 : mid(xs[i - 1][1], x);
+    const max = i === xs.length - 1 ? 9999 : mid(x, xs[i + 1][1]);
+    ranges[col] = { min, max };
+  }
+  return ranges;
+}
+
 const DATE_RX = /\d{2}\/\d{2}\/\d{4}/;
 // Linhas a ignorar (totais, cabecalho de colunas, rodape, titulo).
-const SKIP_RX = /^(N[ºo]\s*Registros|Total\s+Pago|Total\s+Recebido|Total\b|Rela[çc][ãa]o|Per[ií]odo|P[áa]g\b|N[ºo]\s*Lan[çc]|Fornecedor|Sacado|Cliente|Banco|Hist[óo]rico|Venc|Data\s+Pgto|Data\s+Rec|Valor\s+(Pago|Recebido))/i;
+const SKIP_RX = /^(N[ºo]\s*Registros|Total\s+Pago|Total\s+Recebido|Total\s+Provisionado|Total\b|Totais|Rela[çc][ãa]o|Per[ií]odo|P[áa]g\b|N[ºo]\s*Lan[çc]|Fornecedor\/|Sacado|Cliente|Banco|Hist[óo]rico|Venc|Data\s+Pgto|Data\s+Rec|Valor\s+(Pago|Recebido))/i;
 
 async function extractLines(file: File): Promise<{ lines: Line[]; head: string }> {
   const pdfjsLib = await loadPdfJs();
@@ -178,6 +228,10 @@ export async function parseRelacaoContasPDF(file: File): Promise<RelacaoContasRe
 
   const { inicio: periodoInicio, fim: periodoFim } = findPeriodo(head);
 
+  // Detecta as colunas pelo cabecalho (fallback = layout Contas Pagas).
+  const COL: ColRanges = detectarColunas(lines) ?? COL_FALLBACK;
+  const numMax = COL.num?.max ?? 55;
+
   const itens: RelacaoContaItem[] = [];
   let pend: string[] = [];   // cabecalhos acumulados desde o ultimo registro
   let grupo = '';
@@ -185,14 +239,14 @@ export async function parseRelacaoContasPDF(file: File): Promise<RelacaoContasRe
 
   // Concatena, por coluna, todos os items de uma linha (pdfjs pode fragmentar
   // um mesmo campo — ex.: "R$" e "6049,00" — em items separados).
-  const colText = (its: TextItem[], col: keyof typeof COL): string =>
-    its.filter(i => colOf(i.x) === col).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+  const colText = (its: TextItem[], col: ColKey): string =>
+    its.filter(i => colOf(i.x, COL) === col).map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
 
   for (const ln of lines) {
     const its = ln.items;
     if (its.length === 0) continue;
     const valorStr = colText(its, 'valor');
-    const numItem = its.find(i => i.x < COL.num.max && /^\d+$/.test(i.str.replace(/\D/g, '')) && /\d/.test(i.str));
+    const numItem = its.find(i => i.x < numMax && /^\d+$/.test(i.str.replace(/\D/g, '')) && /\d/.test(i.str));
     const hasValor = /\d,\d{2}/.test(valorStr);
 
     // ── REGISTRO ──────────────────────────────────────────────
@@ -223,7 +277,7 @@ export async function parseRelacaoContasPDF(file: File): Promise<RelacaoContasRe
     // ── CABECALHO (Grupo ou Subcategoria) ─────────────────────
     // Linha que comeca na coluna da esquerda, alfabetica, fora da lista de skip
     // e sem valor monetario (registros ja foram tratados acima).
-    if (its[0].x < COL.num.max) {
+    if (its[0].x < numMax) {
       const txt = its.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
       if (txt && !SKIP_RX.test(txt) && /[A-Za-zÀ-ú]/.test(txt) && !/^\d/.test(txt)) {
         pend.push(txt);
