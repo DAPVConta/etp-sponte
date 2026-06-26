@@ -59,8 +59,10 @@ const schema = z.object({
     .refine(v => validateCNPJ(v), 'CNPJ inválido (dígitos verificadores)'),
   nome: z.string().min(1, 'Nome é obrigatório'),
   cor: z.string().min(1),
-  codigoSponte: z.string().min(1, 'Código Sponte é obrigatório'),
-  tokenSponte: z.string().min(1, 'Token Sponte é obrigatório'),
+  // Opcionais: unidades alimentadas apenas por importação de Relatório
+  // (ex.: Qualitrainer) não possuem integração com a API Sponte.
+  codigoSponte: z.string(),
+  tokenSponte: z.string(),
   isMatriz: z.boolean(),
 });
 
@@ -266,7 +268,7 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
             <div className="grid grid-cols-2 gap-4 max-[500px]:grid-cols-1">
               <div className="flex flex-col gap-1.5">
                 <Label className="flex items-center gap-1.5 text-muted-foreground text-xs uppercase tracking-wide font-semibold">
-                  <Hash size={13} /> Código Sponte
+                  <Hash size={13} /> Código Sponte <span className="normal-case opacity-70">(opcional)</span>
                 </Label>
                 <Input
                   placeholder="Ex: 35695"
@@ -278,7 +280,7 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="flex items-center gap-1.5 text-muted-foreground text-xs uppercase tracking-wide font-semibold">
-                  <Key size={13} /> Token Sponte
+                  <Key size={13} /> Token Sponte <span className="normal-case opacity-70">(opcional)</span>
                 </Label>
                 <Input
                   placeholder="Ex: fxW1Et2vS8Vf"

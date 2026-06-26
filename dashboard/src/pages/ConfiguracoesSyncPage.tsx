@@ -16,6 +16,7 @@ import { parseParcelasReceberXML } from '@/lib/sponteXmlParser';
 // Carregamento sob demanda — o modal puxa o parser de PDF (pdfjs ~1.4MB),
 // que só faz sentido baixar quando o usuário decide importar fluxo de caixa.
 const ImportarCaixaModal = lazy(() => import('@/components/ImportarCaixaModal'));
+const ImportarRelatorioModal = lazy(() => import('@/components/ImportarRelatorioModal'));
 
 type SyncType = 'cp' | 'cr';
 
@@ -140,6 +141,8 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
 
   // Modal de importação de Caixa (PDF/XML)
   const [caixaModalOpen, setCaixaModalOpen] = useState(false);
+  // Modal de importação por Relatório (Relação de Contas Pagas/Recebidas)
+  const [relatorioModalOpen, setRelatorioModalOpen] = useState(false);
   // Banner de sucesso que persiste por alguns segundos depois do modal fechar
   const [importToast, setImportToast] = useState<string>('');
 
@@ -262,7 +265,14 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
       for (let ui = 0; ui < units.length; ui++) {
         if (cancelRef.current) break;
         const u = units[ui];
-        const codigoCliente = u.codigoSponte || '35695';
+        // Unidades sem codigo Sponte (ex.: Qualitrainer) sao alimentadas apenas
+        // por importacao de Relatorio — nunca pela API Sponte. Sincroniza-las
+        // aqui usaria o fallback de codigo e traria dados de OUTRA unidade.
+        if (!u.codigoSponte) {
+          setSyncProgress(`[${ui + 1}/${units.length}] ${u.nome}: sem código Sponte — use "Importar Relatório". Pulando.`);
+          continue;
+        }
+        const codigoCliente = u.codigoSponte;
         const token = u.tokenSponte || 'fxW1Et2vS8Vf';
         const curYear = new Date().getFullYear();
 
@@ -575,6 +585,18 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
               <Upload size={15} />
               Importar Despesas do Caixa
             </Button>
+
+            {/* Botão importar Relatório (Contas Pagas/Recebidas) */}
+            <Button
+              variant="outline"
+              onClick={() => setRelatorioModalOpen(true)}
+              disabled={syncing}
+              className="gap-2 font-semibold h-10 px-5"
+              title="Importa lançamentos a partir do relatório 'Relação de Contas Pagas/Recebidas' (unidades sem integração Sponte, ex.: Qualitrainer)."
+            >
+              <Upload size={15} />
+              Importar Relatório
+            </Button>
           </div>
 
           {/* Progresso */}
@@ -779,6 +801,23 @@ export default function ConfiguracoesSyncPage({ unidades, accentColor }: Props) 
               if (msg) {
                 setImportToast(msg);
                 // Auto-dismiss apos 7s
+                setTimeout(() => setImportToast(''), 7000);
+              }
+            }}
+          />
+        </Suspense>
+      )}
+
+      {relatorioModalOpen && (
+        <Suspense fallback={null}>
+          <ImportarRelatorioModal
+            unidades={unidades}
+            accentColor={accentColor}
+            onClose={() => setRelatorioModalOpen(false)}
+            onImportado={(msg) => {
+              loadSyncMap();
+              if (msg) {
+                setImportToast(msg);
                 setTimeout(() => setImportToast(''), 7000);
               }
             }}
