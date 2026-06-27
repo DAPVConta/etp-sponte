@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   Building2, Plus, Users, ToggleLeft, ToggleRight, Loader2,
-  AlertCircle, Check, Mail, FileText, Landmark, ShieldCheck,
+  AlertCircle, Check, Mail, FileText, Landmark, ShieldCheck, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { EmpresasAPI } from '../api/empresas';
@@ -61,6 +61,8 @@ type EmpresaForm = z.infer<typeof empresaSchema>;
 export default function AdminEmpresasPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  // id da empresa em edição (null = criação de nova)
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const { data: empresas = [], isLoading } = useQuery({
     queryKey: ['super_admin_empresas'],
@@ -75,21 +77,54 @@ export default function AdminEmpresasPage() {
     formState: { errors, isSubmitting },
   } = useForm<EmpresaForm>({ resolver: zodResolver(empresaSchema) });
 
+  const VAZIO: EmpresaForm = { cnpj: '', razaoSocial: '', nomeFantasia: '', email: '', logoUrl: '' };
+
+  const abrirCriar = () => {
+    setEditingId(null);
+    reset(VAZIO);
+    setShowForm(true);
+  };
+
+  const abrirEditar = (empresa: Empresa) => {
+    setEditingId(empresa.id);
+    reset({
+      cnpj:         empresa.cnpj,
+      razaoSocial:  empresa.razaoSocial,
+      nomeFantasia: empresa.nomeFantasia,
+      email:        empresa.email ?? '',
+      logoUrl:      empresa.logoUrl ?? '',
+    });
+    setShowForm(true);
+  };
+
   const onSubmit = async (data: EmpresaForm) => {
     try {
-      await EmpresasAPI.criar({
-        cnpj:         data.cnpj,
-        razaoSocial:  data.razaoSocial,
-        nomeFantasia: data.nomeFantasia,
-        email:        data.email || undefined,
-        logoUrl:      data.logoUrl || undefined,
-      });
+      if (editingId) {
+        await EmpresasAPI.atualizar(editingId, {
+          cnpj:         data.cnpj,
+          razaoSocial:  data.razaoSocial,
+          nomeFantasia: data.nomeFantasia,
+          email:        data.email || null,
+          logoUrl:      data.logoUrl || null,
+        });
+        toast.success('Empresa atualizada com sucesso!');
+      } else {
+        await EmpresasAPI.criar({
+          cnpj:         data.cnpj,
+          razaoSocial:  data.razaoSocial,
+          nomeFantasia: data.nomeFantasia,
+          email:        data.email || undefined,
+          logoUrl:      data.logoUrl || undefined,
+        });
+        toast.success('Empresa criada com sucesso!');
+      }
       await qc.invalidateQueries({ queryKey: ['super_admin_empresas'] });
       setShowForm(false);
-      reset();
-      toast.success('Empresa criada com sucesso!');
+      setEditingId(null);
+      reset(VAZIO);
     } catch (err: unknown) {
-      toast.error((err as { message?: string })?.message || 'Erro ao criar empresa.');
+      toast.error((err as { message?: string })?.message ||
+        (editingId ? 'Erro ao atualizar empresa.' : 'Erro ao criar empresa.'));
     }
   };
 
@@ -114,7 +149,7 @@ export default function AdminEmpresasPage() {
           </p>
         </div>
         <Button
-          onClick={() => { reset(); setShowForm(true); }}
+          onClick={abrirCriar}
           className="gap-2 bg-indigo-600 hover:bg-indigo-700"
         >
           <Plus size={18} /> Nova Empresa
@@ -134,7 +169,7 @@ export default function AdminEmpresasPage() {
           <Building2 size={64} className="text-border" />
           <h3 className="text-xl font-bold">Nenhuma empresa cadastrada</h3>
           <p className="text-muted-foreground text-sm">Crie a primeira empresa para começar.</p>
-          <Button onClick={() => setShowForm(true)} className="gap-2 mt-2 bg-indigo-600 hover:bg-indigo-700">
+          <Button onClick={abrirCriar} className="gap-2 mt-2 bg-indigo-600 hover:bg-indigo-700">
             <Plus size={18} /> Criar Primeira Empresa
           </Button>
         </div>
@@ -183,8 +218,15 @@ export default function AdminEmpresasPage() {
               </span>
             </div>
 
-            {/* Toggle */}
-            <div className="flex items-center flex-shrink-0 self-center">
+            {/* Ações: editar + toggle */}
+            <div className="flex items-center gap-2 flex-shrink-0 self-center">
+              <button
+                onClick={() => abrirEditar(empresa)}
+                className="text-muted-foreground hover:text-indigo-500 transition-colors p-1"
+                title="Editar empresa"
+              >
+                <Pencil size={18} />
+              </button>
               <button
                 onClick={() => toggleMutation.mutate({ id: empresa.id, ativo: !empresa.ativo })}
                 className="text-muted-foreground hover:text-foreground transition-colors"
@@ -201,14 +243,16 @@ export default function AdminEmpresasPage() {
       </div>
 
       {/* Modal: nova empresa */}
-      <Dialog open={showForm} onOpenChange={open => !isSubmitting && setShowForm(open)}>
+      <Dialog open={showForm} onOpenChange={open => { if (!isSubmitting) { setShowForm(open); if (!open) setEditingId(null); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Building2 size={18} /> Nova Empresa
+              <Building2 size={18} /> {editingId ? 'Editar Empresa' : 'Nova Empresa'}
             </DialogTitle>
             <DialogDescription>
-              Cadastre um novo cliente no sistema. Cada empresa tem dados e usuários isolados.
+              {editingId
+                ? 'Atualize os dados cadastrais da empresa.'
+                : 'Cadastre um novo cliente no sistema. Cada empresa tem dados e usuários isolados.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -259,12 +303,12 @@ export default function AdminEmpresasPage() {
             </div>
 
             <DialogFooter className="pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)} disabled={isSubmitting}>
+              <Button type="button" variant="outline" onClick={() => { setShowForm(false); setEditingId(null); }} disabled={isSubmitting}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={isSubmitting} className="bg-indigo-600 hover:bg-indigo-700 gap-1.5">
                 {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                Criar Empresa
+                {editingId ? 'Salvar Alterações' : 'Criar Empresa'}
               </Button>
             </DialogFooter>
           </form>
