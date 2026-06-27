@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { Building2, Users, ShieldCheck, LogOut, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LOGO_URL } from '@/lib/branding';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Sidebar,
@@ -28,9 +29,9 @@ export default function SuperAdminSidebar() {
       {/* Header */}
       <SidebarHeader className="items-center justify-center py-5 px-4">
         <img
-          src="/etp-logo.png"
+          src={LOGO_URL}
           alt="Logo"
-          className="max-h-[56px] w-auto object-contain brightness-0 invert opacity-90"
+          className="max-h-[56px] w-auto object-contain"
         />
         <span className="mt-2 text-[0.6rem] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-1">
           <ShieldCheck size={10} /> Super Admin

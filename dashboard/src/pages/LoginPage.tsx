@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { LOGO_URL } from '@/lib/branding';
 
 const schema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -50,7 +51,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="flex justify-center mb-8">
           <img
-            src="/etp-logo.png"
+            src={LOGO_URL}
             alt="ETP"
             className="h-14 w-auto object-contain"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}

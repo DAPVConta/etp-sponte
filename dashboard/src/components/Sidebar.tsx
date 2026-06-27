@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import * as Collapsible from '@radix-ui/react-collapsible';
 import { cn } from '@/lib/utils';
+import { LOGO_URL } from '@/lib/branding';
 import type { Unidade } from '../types';
 import type { LayoutConfig } from '@/hooks/use-layout-config';
 import { useAuth } from '../contexts/AuthContext';
@@ -117,8 +118,7 @@ export default function AppSidebar({
   const cadastroActive = ['/unidades'].some(p => location.pathname.startsWith(p));
   const cpActive = location.pathname === '/' || ['/lancamento-cp', '/categorias'].some(p => location.pathname.startsWith(p));
   const crActive = ['/dashboard-receitas', '/lancamento-cr', '/categorias-receitas'].some(p => location.pathname.startsWith(p));
-  const logoSrc = layout.logoUrl || user?.empresaLogoUrl || '/etp-logo.png';
-  const usingDefaultLogo = !layout.logoUrl && !user?.empresaLogoUrl;
+  const logoSrc = layout.logoUrl || user?.empresaLogoUrl || LOGO_URL;
 
   const [cadastroOpen, setCadastroOpen] = useState(true);
   const [configMenuOpen, setConfigMenuOpen] = useState(true);
@@ -132,10 +132,7 @@ export default function AppSidebar({
         <img
           src={logoSrc}
           alt="Logo"
-          className={cn(
-            'max-h-[56px] w-auto object-contain',
-            usingDefaultLogo && 'brightness-0 invert opacity-90'
-          )}
+          className="max-h-[56px] w-auto object-contain"
         />
         {user?.empresaNomeFantasia && (
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-sidebar-foreground/60 mt-1 text-center truncate w-full">
