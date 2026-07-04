@@ -22,8 +22,9 @@ export interface LancamentoFiltros {
 }
 
 export const ContasPagarAPI = {
-  // Busca contas do banco de dados (Supabase) para o Dashboard
-  async listar(unidadeId: string | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
+  // Busca contas do banco de dados (Supabase) para o Dashboard.
+  // Aceita um id, uma lista de ids (ex.: apenas unidades ativas) ou null (sem filtro).
+  async listar(unidadeId: string | string[] | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
     // Filtro: linhas onde vencimento OU data_pagamento caem na janela [start, end].
     // Usa OR de dois ANDs para o planner aproveitar idx_etp_cp_unid_venc e
     // idx_etp_cp_unid_pag (bitmap OR), evitando seq scan da tabela inteira.
@@ -42,7 +43,9 @@ export const ContasPagarAPI = {
         .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (unidadeId) {
+      if (Array.isArray(unidadeId)) {
+        query = query.in('unidade_id', unidadeId);
+      } else if (unidadeId) {
         query = query.eq('unidade_id', unidadeId);
       }
 
@@ -82,6 +85,35 @@ export const ContasPagarAPI = {
       ContaID: '',
       RetornoOperacao: ''
     }));
+  },
+
+  // Categorias distintas com lançamentos nas unidades informadas.
+  // Usado para montar um plano de contas "virtual" para unidades sem
+  // plano cadastrado (ex.: alimentadas apenas por importação de relatório).
+  async listarCategoriasDistintas(unidadeIds: string[]): Promise<string[]> {
+    if (!unidadeIds.length) return [];
+
+    const categorias = new Set<string>();
+    let page = 0;
+    const PAGE_SIZE = 1000;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('etp_contas_pagar')
+        .select('categoria')
+        .in('unidade_id', unidadeIds)
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        if (row.categoria) categorias.add(String(row.categoria));
+      }
+      if (data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return [...categorias].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   },
 
   // Lista de lançamentos para a tela Lançamento CP

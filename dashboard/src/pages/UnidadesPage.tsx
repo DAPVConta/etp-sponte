@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   Building2, Plus, Pencil, Trash2, AlertCircle, Palette, Hash, Key, FileText,
-  Loader2, Eye, EyeOff, Check, Star,
+  Loader2, Eye, EyeOff, Check, Star, Power,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Unidade } from '../types';
@@ -83,6 +83,7 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [settingMatriz, setSettingMatriz] = useState<string | null>(null);
+  const [togglingAtiva, setTogglingAtiva] = useState<string | null>(null);
 
   const {
     register, handleSubmit, setValue, watch, reset,
@@ -126,9 +127,10 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
         await UnidadesAPI.atualizar(editingId, {
           ...data,
           empresaId: existing?.empresaId ?? empresaId,
+          ativa: existing?.ativa ?? true,
         });
       } else {
-        await UnidadesAPI.criar({ ...data, empresaId });
+        await UnidadesAPI.criar({ ...data, empresaId, ativa: true });
       }
       await onUpdateUnidades();
       setShowForm(false);
@@ -153,6 +155,24 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
       toast.error(e?.message || 'Erro ao excluir unidade.');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleToggleAtiva = async (u: Unidade) => {
+    setTogglingAtiva(u.id);
+    try {
+      await UnidadesAPI.alternarAtiva(u.id, !u.ativa);
+      await onUpdateUnidades();
+      toast.success(
+        u.ativa
+          ? `"${u.nome}" desativada. Os dados e lançamentos ficam ocultos no sistema.`
+          : `"${u.nome}" reativada. Os dados voltam a aparecer no sistema.`
+      );
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      toast.error(e?.message || 'Erro ao alterar status da unidade.');
+    } finally {
+      setTogglingAtiva(null);
     }
   };
 
@@ -391,19 +411,27 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
               key={u.id}
               className={cn(
                 'p-6 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl animate-fade-in-up',
-                u.isMatriz && 'ring-1 ring-amber-400/40'
+                u.isMatriz && u.ativa && 'ring-1 ring-amber-400/40',
+                !u.ativa && 'opacity-60 grayscale bg-muted/30'
               )}
               style={{
-                borderTop: `4px solid ${u.cor}`,
+                borderTop: `4px solid ${u.ativa ? u.cor : '#94a3b8'}`,
                 animationDelay: `${idx * 60}ms`,
               }}
             >
-              {/* Badge matriz */}
-              {u.isMatriz && (
-                <div className="absolute top-3 right-3">
-                  <Badge className="bg-amber-500/10 text-amber-600 border-amber-400/30 text-[0.62rem] gap-1 px-1.5 py-0.5">
-                    <Star size={9} className="fill-amber-500" /> Matriz
-                  </Badge>
+              {/* Badges matriz / desativada */}
+              {(u.isMatriz || !u.ativa) && (
+                <div className="absolute top-3 right-3 flex gap-1.5">
+                  {!u.ativa && (
+                    <Badge className="bg-slate-500/10 text-slate-500 border-slate-400/30 text-[0.62rem] gap-1 px-1.5 py-0.5">
+                      <Power size={9} /> Desativada
+                    </Badge>
+                  )}
+                  {u.isMatriz && (
+                    <Badge className="bg-amber-500/10 text-amber-600 border-amber-400/30 text-[0.62rem] gap-1 px-1.5 py-0.5">
+                      <Star size={9} className="fill-amber-500" /> Matriz
+                    </Badge>
+                  )}
                 </div>
               )}
 
@@ -415,6 +443,25 @@ export default function UnidadesPage({ unidades, onUpdateUnidades, accentColor }
                   <Building2 size={16} />
                 </div>
                 <div className="flex gap-1.5">
+                  {/* Botão ativar/desativar */}
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className={cn(
+                      'w-8 h-8',
+                      u.ativa
+                        ? 'text-emerald-600 border-emerald-400/40 bg-emerald-500/5 hover:bg-red-500/10 hover:text-red-500 hover:border-red-400/40'
+                        : 'text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-600 hover:border-emerald-400/40'
+                    )}
+                    onClick={() => handleToggleAtiva(u)}
+                    disabled={togglingAtiva === u.id}
+                    title={u.ativa ? 'Desativar unidade (oculta dados e lançamentos)' : 'Reativar unidade'}
+                  >
+                    {togglingAtiva === u.id
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <Power size={13} />
+                    }
+                  </Button>
                   {/* Botão definir matriz (se nao for já a matriz) */}
                   {!u.isMatriz && (
                     <Button

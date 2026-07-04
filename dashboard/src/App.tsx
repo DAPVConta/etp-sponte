@@ -62,7 +62,8 @@ function AppShell() {
       setUnidades(data);
       if (activeUnidade) {
         const stillExists = data.find(u => u.id === activeUnidade.id);
-        if (!stillExists) setActiveUnidade(null);
+        // Unidade excluida ou desativada deixa de ser a ativa
+        if (!stillExists || !stillExists.ativa) setActiveUnidade(null);
         else setActiveUnidade(stillExists);
       }
     } catch (err: unknown) {
@@ -102,6 +103,11 @@ function AppShell() {
 
   const accentColor = activeUnidade?.cor || '#6366f1';
 
+  // Unidades desativadas somem de todo o sistema (dashboards, lancamentos,
+  // planejamento, seletor do topo). Apenas a pagina de Cadastro de Unidades
+  // recebe a lista completa, para permitir reativar.
+  const unidadesAtivas = unidades.filter(u => u.ativa);
+
   return (
     <SidebarProvider style={{ '--sidebar-width': '16.5rem' } as React.CSSProperties}>
       <AppSidebar
@@ -114,7 +120,7 @@ function AppShell() {
         <div className="flex flex-1 flex-col min-h-screen rounded-l-2xl bg-background text-foreground shadow-lg overflow-hidden">
           <TopBar
             activeUnidade={activeUnidade}
-            unidades={unidades}
+            unidades={unidadesAtivas}
             onSelectUnidade={setActiveUnidade}
             accentColor={accentColor}
           />
@@ -133,42 +139,42 @@ function AppShell() {
                 {/* Dashboard e paginas de leitura — viewer+ */}
                 <Route path="/" element={
                   <ProtectedRoute minRole="viewer">
-                    <DashboardPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
+                    <DashboardPage activeUnidade={activeUnidade} unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/dashboard-receitas" element={
                   <ProtectedRoute minRole="viewer">
-                    <DashboardReceitasPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
+                    <DashboardReceitasPage activeUnidade={activeUnidade} unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/planejamento" element={
                   <ProtectedRoute minRole="viewer">
-                    <PlanejamentoPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                    <PlanejamentoPage unidades={unidadesAtivas} activeUnidade={activeUnidade} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/dashboard-financeiro" element={
                   <ProtectedRoute minRole="viewer">
-                    <DashboardFinanceiroPage activeUnidade={activeUnidade} unidades={unidades} accentColor={accentColor} />
+                    <DashboardFinanceiroPage activeUnidade={activeUnidade} unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/lancamento-cp" element={
                   <ProtectedRoute minRole="viewer">
-                    <LancamentoCPPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                    <LancamentoCPPage unidades={unidadesAtivas} activeUnidade={activeUnidade} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/lancamento-cr" element={
                   <ProtectedRoute minRole="viewer">
-                    <LancamentoCRPage unidades={unidades} activeUnidade={activeUnidade} accentColor={accentColor} />
+                    <LancamentoCRPage unidades={unidadesAtivas} activeUnidade={activeUnidade} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/categorias" element={
                   <ProtectedRoute minRole="viewer">
-                    <CategoriasPage unidades={unidades} accentColor={accentColor} />
+                    <CategoriasPage unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
                 <Route path="/categorias-receitas" element={
                   <ProtectedRoute minRole="viewer">
-                    <CategoriasReceitasPage unidades={unidades} accentColor={accentColor} />
+                    <CategoriasReceitasPage unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
 
@@ -191,7 +197,7 @@ function AppShell() {
                 } />
                 <Route path="/configuracoes/sincronizar" element={
                   <ProtectedRoute minRole="admin">
-                    <ConfiguracoesSyncPage unidades={unidades} accentColor={accentColor} />
+                    <ConfiguracoesSyncPage unidades={unidadesAtivas} accentColor={accentColor} />
                   </ProtectedRoute>
                 } />
 

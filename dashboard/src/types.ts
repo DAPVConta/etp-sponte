@@ -43,6 +43,7 @@ export interface Unidade {
   codigoSponte: string;
   tokenSponte: string;
   isMatriz: boolean;
+  ativa: boolean;
   criadoEm: string;
 }
 

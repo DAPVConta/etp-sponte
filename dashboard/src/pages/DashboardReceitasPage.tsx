@@ -186,7 +186,12 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
     setLoading(true);
     setError('');
     try {
-      const dbData = await ContasReceberAPI.listar(activeUnidade?.id || null, startDate, endDate);
+      // Sem unidade selecionada ("Todas"): busca apenas as unidades recebidas
+      // via props (ja filtradas para ativas), em vez de toda a empresa.
+      const dbData = await ContasReceberAPI.listar(
+        activeUnidade?.id || unidades.map(u => u.id),
+        startDate, endDate
+      );
       setData(dbData);
     } catch (err: unknown) {
       const e = err as { message?: string };
@@ -194,7 +199,7 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
     } finally {
       setLoading(false);
     }
-  }, [activeUnidade, startDate, endDate]);
+  }, [activeUnidade, unidades, startDate, endDate]);
 
   useEffect(() => { loadDataFromDB(); }, [loadDataFromDB]);
 

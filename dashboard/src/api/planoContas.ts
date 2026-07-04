@@ -39,26 +39,44 @@ export const PlanoContasAPI = {
    * Le a matriz global de plano de contas (etp_plano_contas_matriz) e retorna:
    *  - grupos: lista de grupos ATIVOS (tipo='grupo', ativo=true), ordenada;
    *  - categoriaToGrupo: mapa normalizado nome-da-categoria -> grupo_nome,
-   *    montado de TODAS as linhas ativas (grupo/sub_grupo/despesa) para
-   *    maximizar o match com a categoria que vem nos lancamentos.
+   *    montado de TODAS as linhas ativas (grupo/sub_grupo/despesa) e dos
+   *    aliases do Sponte (etp_plano_contas_sponte_aliases) para maximizar
+   *    o match com a categoria que vem nos lancamentos.
    */
   async listarMatrizGrupos(): Promise<{ grupos: string[]; categoriaToGrupo: Record<string, string> }> {
-    const { data, error } = await supabase
-      .from('etp_plano_contas_matriz')
-      .select('nome, tipo, grupo_nome, ativo')
-      .eq('ativo', true);
+    const [matrizRes, aliasRes] = await Promise.all([
+      supabase
+        .from('etp_plano_contas_matriz')
+        .select('nome, tipo, grupo_nome, ativo')
+        .eq('ativo', true),
+      supabase
+        .from('etp_plano_contas_sponte_aliases')
+        .select('sponte_nome, matriz:etp_plano_contas_matriz(grupo_nome, ativo)'),
+    ]);
 
-    if (error) throw error;
+    if (matrizRes.error) throw matrizRes.error;
+    if (aliasRes.error) throw aliasRes.error;
 
     const norm = (s: string) =>
       s.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
 
     const grupos = new Set<string>();
     const categoriaToGrupo: Record<string, string> = {};
-    for (const row of data ?? []) {
+    for (const row of matrizRes.data ?? []) {
       const grupoNome = row.grupo_nome ? String(row.grupo_nome) : '';
       if (row.tipo === 'grupo' && grupoNome) grupos.add(grupoNome);
       if (row.nome && grupoNome) categoriaToGrupo[norm(String(row.nome))] = grupoNome;
+    }
+
+    // Aliases: nome usado no Sponte/importacao -> grupo da linha canonica
+    // (relacao many-to-one: o PostgREST retorna objeto, mas o client tipa
+    // como array — normaliza os dois formatos)
+    for (const row of aliasRes.data ?? []) {
+      const m = (Array.isArray(row.matriz) ? row.matriz[0] : row.matriz) as
+        { grupo_nome: string | null; ativo: boolean } | null | undefined;
+      if (!row.sponte_nome || !m?.grupo_nome || m.ativo === false) continue;
+      const key = norm(String(row.sponte_nome));
+      if (!categoriaToGrupo[key]) categoriaToGrupo[key] = String(m.grupo_nome);
     }
 
     return {

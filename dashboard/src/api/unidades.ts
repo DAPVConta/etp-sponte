@@ -12,6 +12,7 @@ function mapUnidade(row: {
   codigo_sponte: string;
   token_sponte: string;
   is_matriz: boolean;
+  ativa: boolean;
   criado_em: string;
 }): Unidade {
   return {
@@ -23,12 +24,13 @@ function mapUnidade(row: {
     codigoSponte: row.codigo_sponte,
     tokenSponte: row.token_sponte,
     isMatriz: row.is_matriz,
+    ativa: row.ativa,
     criadoEm: row.criado_em,
   };
 }
 
 const SELECT_FIELDS =
-  'id, empresa_id, cnpj, nome, cor, codigo_sponte, token_sponte, is_matriz, criado_em';
+  'id, empresa_id, cnpj, nome, cor, codigo_sponte, token_sponte, is_matriz, ativa, criado_em';
 
 // ── API ───────────────────────────────────────────────────────
 
@@ -58,6 +60,7 @@ export const UnidadesAPI = {
         codigo_sponte: unidade.codigoSponte,
         token_sponte:  unidade.tokenSponte,
         is_matriz:     unidade.isMatriz,
+        ativa:         unidade.ativa,
       })
       .select(SELECT_FIELDS)
       .single();
@@ -83,6 +86,17 @@ export const UnidadesAPI = {
 
     if (error) throw error;
     return mapUnidade(data);
+  },
+
+  // Ativa/desativa uma unidade. Desativada, ela some de todo o
+  // sistema (dashboards, lancamentos, seletor) mas mantem os dados.
+  async alternarAtiva(id: string, ativa: boolean): Promise<void> {
+    const { error } = await supabase
+      .from('etp_unidades')
+      .update({ ativa })
+      .eq('id', id);
+
+    if (error) throw error;
   },
 
   // Define uma unidade como matriz (desmarca a anterior automaticamente via DB)

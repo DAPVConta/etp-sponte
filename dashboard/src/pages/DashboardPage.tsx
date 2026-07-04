@@ -345,7 +345,12 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
     setLoading(true);
     setLoadingProgress('Carregando dados locais armazenados...');
     try {
-      const dbData = await ContasPagarAPI.listar(activeUnidade?.id || null, startDate, endDate);
+      // Sem unidade selecionada ("Todas"): busca apenas as unidades recebidas
+      // via props (ja filtradas para ativas), em vez de toda a empresa.
+      const dbData = await ContasPagarAPI.listar(
+        activeUnidade?.id || unidades.map(u => u.id),
+        startDate, endDate
+      );
       setData(dbData);
       setDataSource('api');
     } catch (err) {
@@ -354,7 +359,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       setLoading(false);
       setLoadingProgress('');
     }
-  }, [activeUnidade, startDate, endDate]);
+  }, [activeUnidade, unidades, startDate, endDate]);
 
   const syncSponteToDB = useCallback(async () => {
     const unitId = activeUnidade?.id;
