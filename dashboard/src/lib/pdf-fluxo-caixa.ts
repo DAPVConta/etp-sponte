@@ -35,7 +35,8 @@ export interface FluxoCaixaLancamento {
   dataRep: string;       // YYYY-MM-DD (= data quando o formato nao tem)
   categoria: string;
   tipo: 'E' | 'S';
-  origemDestino: string;
+  origemDestino: string; // aluno/fornecedor; VAZIO quando o lancamento nao tem aluno atribuido
+  complemento: string;   // texto livre do Sponte (ex.: "Clinica Escola")
   valor: number;         // absoluto (positivo)
 }
 
@@ -207,6 +208,7 @@ function parseFluxoCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
       categoria,
       tipo,
       origemDestino,
+      complemento: '',
       valor,
     };
     lancamentos.push(row);
@@ -384,6 +386,7 @@ function parseLancamentosCaixa(pages: PageItems[]): FluxoCaixaLancamento[] {
         categoria: r.categoria.join(' ').replace(/\s+/g, ' ').trim(),
         tipo: valor < 0 ? 'S' : 'E',
         origemDestino: r.origem.join(' ').replace(/\s+/g, ' ').trim(),
+        complemento: r.complemento.join(' ').replace(/\s+/g, ' ').trim(),
         valor: Math.abs(valor),
       });
     }
@@ -448,6 +451,7 @@ function parsePlanoDeContas(pages: PageItems[], dataAlvoISO: string): FluxoCaixa
         categoria,
         tipo: 'S',
         origemDestino: 'Resumo Plano de Contas',
+        complemento: '',
         valor: Math.abs(valor),
       });
     }
@@ -614,8 +618,11 @@ async function parseLancamentosXML(file: File): Promise<FluxoCaixaRelatorio> {
     const categoria = getText(t, 'Categoria');
     if (!categoria) continue;
 
-    // Sacado: prefere OrigemDestino, depois Complemento, depois fallback.
-    const origemDestino = getText(t, 'OrigemDestino') || getText(t, 'Complemento') || '';
+    // OrigemDestino identifica o aluno/fornecedor; fica VAZIO quando o
+    // lancamento nao tem aluno atribuido (ex.: Pix avulso "Clinica Escola").
+    // O Complemento e mantido separado — usado como descricao no import.
+    const origemDestino = getText(t, 'OrigemDestino');
+    const complemento = getText(t, 'Complemento');
 
     // Pega o nome da unidade do primeiro <Table> que tiver NomeEmpresa.
     if (!unidadeNome) {
@@ -629,6 +636,7 @@ async function parseLancamentosXML(file: File): Promise<FluxoCaixaRelatorio> {
       categoria,
       tipo,
       origemDestino,
+      complemento,
       valor: Math.abs(valorN),
     });
 
