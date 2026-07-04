@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { X, Upload, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { parseLancamentosFile, UnsupportedReportError, type FluxoCaixaRelatorio } from '@/lib/pdf-fluxo-caixa';
-import { importarLancamentosCaixa } from '@/api/fluxoCaixaImport';
+import { parseLancamentosFile, UnsupportedReportError, type FluxoCaixaRelatorio, type FluxoCaixaLancamento } from '@/lib/pdf-fluxo-caixa';
+import { importarLancamentosCaixa, CATEGORIA_OUTRAS_ENTRADAS } from '@/api/fluxoCaixaImport';
 import type { Unidade } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +26,12 @@ const fmtData = (iso: string) => {
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
 };
+
+// Entrada COM aluno atribuído: já chega pela sincronização da API Sponte
+// (GetParcelas, por aluno) — importá-la pelo caixa duplicaria a receita.
+// Entrada SEM aluno vira "Outras Entradas" em contas a receber.
+const isEntradaComAluno = (l: FluxoCaixaLancamento): boolean =>
+  l.tipo === 'E' && !!l.origemDestino.trim();
 
 // Normaliza nome: minúsculo, sem acento, sem espaço extra
 function norm(s: string): string {
@@ -78,9 +84,12 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         throw new Error('Nenhum lançamento encontrado no PDF.');
       }
       setRelatorio(rel);
-      // Por padrao todos os lancamentos vem marcados; usuario pode desmarcar
+      // Por padrao todos os lancamentos IMPORTAVEIS vem marcados; entradas com
+      // aluno ficam fora (ja vem da API Sponte). Usuario pode desmarcar
       // individualmente antes de importar.
-      setSelectedIndices(new Set(rel.lancamentos.map((_, i) => i)));
+      setSelectedIndices(new Set(
+        rel.lancamentos.map((_, i) => i).filter(i => !isEntradaComAluno(rel.lancamentos[i]))
+      ));
       const matchedId = matchUnidade(rel.unidadeNome);
       setUnidadeId(matchedId);
       setDetectedUnidadeId(matchedId);
@@ -119,13 +128,19 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         relatorio.periodoFim,
         lancamentosSelecionados
       );
+      const partes: string[] = [];
+      if (r.inseridos > 0) partes.push(`${r.inseridos} despesa(s) do caixa`);
+      if (r.inseridosOutrasEntradas > 0) partes.push(`${r.inseridosOutrasEntradas} lançamento(s) como "${CATEGORIA_OUTRAS_ENTRADAS}" em receitas`);
       const mensagem =
-        `Importação concluída: ${r.inseridos} lançamento(s) inseridos` +
+        `Importação concluída: ${partes.length ? partes.join(' e ') : 'nenhum lançamento'} inserido(s)` +
         (r.removidosAntesDeInserir > 0
           ? ` (${r.removidosAntesDeInserir} registros anteriores do mesmo período foram substituídos)`
           : '') +
         (r.ignoradosPorDuplicidade > 0
-          ? `, ${r.ignoradosPorDuplicidade} ignorado(s) por já existirem via API Sponte.`
+          ? `, ${r.ignoradosPorDuplicidade} ignorado(s) por já existirem via API Sponte`
+          : '') +
+        (r.entradasComAlunoIgnoradas > 0
+          ? `, ${r.entradasComAlunoIgnoradas} entrada(s) com aluno não importada(s) (já vêm da API Sponte).`
           : '.');
       setSucesso(mensagem);
       // Notifica o pai com a mensagem para que ele possa exibir um banner/toast
@@ -149,13 +164,14 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h2 className="text-base font-semibold">Importar Despesas pagas pelo Caixa</h2>
+            <h2 className="text-base font-semibold">Importar Lançamentos do Caixa</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Anexe um arquivo de um destes relatórios do Sponte (PDF ou XML, qualquer período):
               {' '}<a href="https://www.sponteeducacional.net.br/SPRel/Financeiro/Lancamentos.aspx"
                  target="_blank" rel="noopener noreferrer"
                  className="underline hover:text-foreground"><strong>Lançamentos do Caixa</strong></a>
               {' '}(granular, recomendado — XML é mais preciso que PDF), <strong>Plano de Contas</strong> (resumo agregado) ou o legado <strong>Fluxo de Caixa</strong>.
+              {' '}Saídas viram despesas; entradas <strong>sem aluno atribuído</strong> viram "{CATEGORIA_OUTRAS_ENTRADAS}" em receitas; entradas com aluno são ignoradas (já vêm da API Sponte).
             </p>
           </div>
           <button
@@ -283,10 +299,13 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                 const totalSaidasSel = relatorio.lancamentos.reduce(
                   (s, l, i) => s + (selectedIndices.has(i) && l.tipo === 'S' ? l.valor : 0), 0);
                 const toggleAll = (v: boolean | 'indeterminate') => {
-                  if (v === true) setSelectedIndices(new Set(relatorio.lancamentos.map((_, i) => i)));
+                  if (v === true) setSelectedIndices(new Set(
+                    relatorio.lancamentos.map((_, i) => i).filter(i => !isEntradaComAluno(relatorio.lancamentos[i]))
+                  ));
                   else setSelectedIndices(new Set());
                 };
                 const toggleIdx = (i: number) => {
+                  if (isEntradaComAluno(relatorio.lancamentos[i])) return;
                   setSelectedIndices(prev => {
                     const next = new Set(prev);
                     if (next.has(i)) next.delete(i); else next.add(i);
@@ -315,18 +334,38 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
                       <tbody>
                         {relatorio.lancamentos.map((l, i) => {
                           const checked = selectedIndices.has(i);
+                          const viaAPI = isEntradaComAluno(l);
+                          const outrasEntradas = l.tipo === 'E' && !viaAPI;
                           return (
                             <tr key={i} className={cn('border-t border-border', !checked && 'opacity-40')}>
                               <td className="px-3 py-1.5">
                                 <Checkbox
                                   checked={checked}
                                   onCheckedChange={() => toggleIdx(i)}
-                                  disabled={importing}
+                                  disabled={importing || viaAPI}
                                   aria-label={`Selecionar lançamento ${i + 1}`}
                                 />
                               </td>
                               <td className="px-3 py-1.5 text-xs">{fmtData(l.data)}</td>
-                              <td className="px-3 py-1.5">{l.categoria}</td>
+                              <td className="px-3 py-1.5">
+                                {l.categoria}
+                                {viaAPI && (
+                                  <span
+                                    className="ml-2 inline-block px-1.5 py-0.5 rounded text-[0.62rem] font-semibold uppercase tracking-wide bg-slate-100 text-slate-500 border border-slate-200"
+                                    title={`Entrada com aluno atribuído ("${l.origemDestino}") — já vem da sincronização com a API Sponte; importar pelo caixa duplicaria a receita.`}
+                                  >
+                                    via API Sponte
+                                  </span>
+                                )}
+                                {outrasEntradas && (
+                                  <span
+                                    className="ml-2 inline-block px-1.5 py-0.5 rounded text-[0.62rem] font-semibold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    title={`Entrada sem aluno atribuído${l.complemento ? ` ("${l.complemento}")` : ''} — será importada em receitas como "${CATEGORIA_OUTRAS_ENTRADAS}".`}
+                                  >
+                                    {CATEGORIA_OUTRAS_ENTRADAS}
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-3 py-1.5 text-center text-xs font-semibold">
                                 <span className={cn(
                                   'inline-block px-1.5 py-0.5 rounded',
@@ -373,7 +412,7 @@ export default function ImportarCaixaModal({ unidades, accentColor, onClose, onI
 
               <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 Ao importar, qualquer registro com <strong>forma_cobranca = CAIXA</strong> desta unidade no período{' '}
-                <strong>{fmtData(relatorio.periodoInicio)} a {fmtData(relatorio.periodoFim)}</strong> será substituído pelos lançamentos <strong>selecionados</strong> acima.
+                <strong>{fmtData(relatorio.periodoInicio)} a {fmtData(relatorio.periodoFim)}</strong> (em despesas e em receitas) será substituído pelos lançamentos <strong>selecionados</strong> acima.
               </div>
             </>
           )}
