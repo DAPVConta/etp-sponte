@@ -87,6 +87,35 @@ export const ContasPagarAPI = {
     }));
   },
 
+  // Categorias distintas com lançamentos nas unidades informadas.
+  // Usado para montar um plano de contas "virtual" para unidades sem
+  // plano cadastrado (ex.: alimentadas apenas por importação de relatório).
+  async listarCategoriasDistintas(unidadeIds: string[]): Promise<string[]> {
+    if (!unidadeIds.length) return [];
+
+    const categorias = new Set<string>();
+    let page = 0;
+    const PAGE_SIZE = 1000;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('etp_contas_pagar')
+        .select('categoria')
+        .in('unidade_id', unidadeIds)
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        if (row.categoria) categorias.add(String(row.categoria));
+      }
+      if (data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return [...categorias].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  },
+
   // Lista de lançamentos para a tela Lançamento CP
   async listarLancamentos(filtros: LancamentoFiltros = {}): Promise<LancamentoCP[]> {
     const { unidadeIds, mes, situacao, categoria } = filtros;

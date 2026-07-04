@@ -9,6 +9,7 @@ import {
 import type { Unidade } from '../types';
 import { PlanejamentoAPI, type ItemPlanejamento } from '../api/planejamento';
 import { PlanoContasAPI, type PlanoContasItem } from '../api/planoContas';
+import { ContasPagarAPI } from '../api/contasPagar';
 import { FavoritosAPI } from '../api/favoritos';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -168,8 +169,9 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
     setLoadingMedias(true); setErroMsg(''); setSaveStatus('idle');
     try {
       // 1. Plano de contas (merge + dedup)
+      const idsArr = [...selectedIds];
       const planoResults = await Promise.all(
-        [...selectedIds].map(id => PlanoContasAPI.listarPorUnidade(id).catch(() => [] as PlanoContasItem[]))
+        idsArr.map(id => PlanoContasAPI.listarPorUnidade(id).catch(() => [] as PlanoContasItem[]))
       );
       const allItems: PlanoContasItem[] = [];
       const seenIds = new Set<string>();
@@ -177,6 +179,59 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
         for (const item of items)
           if (!seenIds.has(item.id)) { seenIds.add(item.id); allItems.push(item); }
       allItems.sort((a, b) => a.sortOrder - b.sortOrder);
+
+      // 1b. Plano de contas VIRTUAL para unidades sem plano cadastrado
+      // (ex.: Quali Goiana/Paulista, alimentadas por importação de relatório).
+      // Monta grupos/despesas a partir das categorias dos próprios lançamentos,
+      // classificadas pela matriz canônica + aliases do Sponte. Categorias sem
+      // match caem no grupo "SEM GRUPO DEFINIDO" (tratamento de órfãs abaixo).
+      const idsSemPlano = idsArr.filter((_, i) => planoResults[i].length === 0);
+      if (idsSemPlano.length > 0) {
+        const [{ categoriaToGrupo }, categorias] = await Promise.all([
+          PlanoContasAPI.listarMatrizGrupos().catch(() => ({ categoriaToGrupo: {} as Record<string, string> })),
+          ContasPagarAPI.listarCategoriasDistintas(idsSemPlano).catch(() => [] as string[]),
+        ]);
+
+        // Nomes já presentes no plano real (norm -> nome real), p/ dedup e
+        // para reaproveitar grupos existentes com grafia levemente diferente
+        const despesasExistentes = new Set(allItems.filter(i => i.tipo === 'despesa').map(i => norm(i.nome)));
+        const gruposExistentes = new Map(allItems.filter(i => i.tipo === 'grupo').map(i => [norm(i.nome), i.nome]));
+
+        let sort = allItems.length ? Math.max(...allItems.map(i => i.sortOrder)) + 1 : 0;
+        const gruposVirtuais = new Set<string>();
+        const novasDespesas: PlanoContasItem[] = [];
+
+        for (const cat of categorias) {
+          if (despesasExistentes.has(norm(cat))) continue;
+          const grupoMatriz = categoriaToGrupo[norm(cat)] ?? null;
+          // Reusa o grupo do plano real quando o nome coincide (normalizado)
+          const grupoNome = grupoMatriz ? (gruposExistentes.get(norm(grupoMatriz)) ?? grupoMatriz) : null;
+          if (grupoNome && !gruposExistentes.has(norm(grupoNome))) gruposVirtuais.add(grupoNome);
+          novasDespesas.push({
+            id: `virtual-desp::${norm(cat)}`,
+            nome: cat,
+            tipo: 'despesa',
+            grupoNome,
+            subGrupoNome: null,
+            sortOrder: 0,
+          });
+        }
+
+        for (const g of [...gruposVirtuais].sort((a, b) => a.localeCompare(b, 'pt-BR'))) {
+          allItems.push({
+            id: `virtual-grupo::${norm(g)}`,
+            nome: g,
+            tipo: 'grupo',
+            grupoNome: g,
+            subGrupoNome: null,
+            sortOrder: sort++,
+          });
+        }
+        for (const d of novasDespesas) {
+          d.sortOrder = sort++;
+          allItems.push(d);
+        }
+      }
 
       // 2. Valores de referência: média 6 meses ou último mês
       const mediasResult = refMode === 'media6'
