@@ -22,8 +22,9 @@ export interface LancamentoFiltros {
 }
 
 export const ContasPagarAPI = {
-  // Busca contas do banco de dados (Supabase) para o Dashboard
-  async listar(unidadeId: string | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
+  // Busca contas do banco de dados (Supabase) para o Dashboard.
+  // Aceita um id, uma lista de ids (ex.: apenas unidades ativas) ou null (sem filtro).
+  async listar(unidadeId: string | string[] | null, startDate: string, endDate: string): Promise<ParcelaPagar[]> {
     // Filtro: linhas onde vencimento OU data_pagamento caem na janela [start, end].
     // Usa OR de dois ANDs para o planner aproveitar idx_etp_cp_unid_venc e
     // idx_etp_cp_unid_pag (bitmap OR), evitando seq scan da tabela inteira.
@@ -42,7 +43,9 @@ export const ContasPagarAPI = {
         .or(windowFilter)
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (unidadeId) {
+      if (Array.isArray(unidadeId)) {
+        query = query.in('unidade_id', unidadeId);
+      } else if (unidadeId) {
         query = query.eq('unidade_id', unidadeId);
       }
 
