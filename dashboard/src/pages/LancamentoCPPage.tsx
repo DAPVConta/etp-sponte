@@ -22,12 +22,23 @@ function fmtDateBR(iso: string | null) {
 const normCat = (s: string) =>
   (s || '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
 
-function getMesesAno(): { value: string; label: string }[] {
-  const ano = new Date().getFullYear();
-  return Array.from({ length: 12 }, (_, i) => ({
-    value: `${ano}-${String(i + 1).padStart(2, '0')}`,
-    label: `${MESES_PT[i]} ${ano}`,
-  }));
+// Valor do <select> de grupo para "categorias que não estão na matriz do plano
+// de contas". Sem isto esses lançamentos ficam inalcançáveis pelo filtro de
+// grupo (e invisíveis quando qualquer grupo está selecionado).
+const SEM_GRUPO = '__sem_grupo__';
+
+// Ano corrente + anterior, do mês mais recente para o mais antigo. Antes só o
+// ano corrente era listado, o que tornava os lançamentos do ano passado
+// inacessíveis pelo filtro.
+function getMesesDisponiveis(): { value: string; label: string }[] {
+  const anoAtual = new Date().getFullYear();
+  const out: { value: string; label: string }[] = [];
+  for (const ano of [anoAtual, anoAtual - 1]) {
+    for (let i = 11; i >= 0; i--) {
+      out.push({ value: `${ano}-${String(i + 1).padStart(2, '0')}`, label: `${MESES_PT[i]} ${ano}` });
+    }
+  }
+  return out;
 }
 
 interface Props {
@@ -72,28 +83,38 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
     return m;
   }, [unidades]);
 
-  const carregar = async () => {
-    if (!unidadeIds.length) return;
+  // Cada mudança de filtro dispara uma busca. Sem cancelamento, a resposta de
+  // uma busca antiga pode chegar DEPOIS da atual e sobrescrever a lista com
+  // lançamentos de outro filtro (era o que fazia aparecer linha de outro mês /
+  // outra categoria). O flag `cancelado` descarta respostas obsoletas.
+  useEffect(() => {
+    if (!unidadeIds.length) {
+      setLancamentos([]);
+      return;
+    }
+    let cancelado = false;
     setLoading(true);
     setErro('');
-    try {
-      const data = await ContasPagarAPI.listarLancamentos({
-        unidadeIds,
-        mes: mes || null,
-        situacao: situacao || null,
-        categoria: categoria || null,
+    ContasPagarAPI.listarLancamentos({
+      unidadeIds,
+      mes: mes || null,
+      situacao: situacao || null,
+      categoria: categoria || null,
+    })
+      .then(data => {
+        if (cancelado) return;
+        setLancamentos(data);
+      })
+      .catch((e: unknown) => {
+        if (cancelado) return;
+        const err = e as { message?: string };
+        setErro(err?.message || 'Erro ao carregar lançamentos');
+        setLancamentos([]);
+      })
+      .finally(() => {
+        if (!cancelado) setLoading(false);
       });
-      setLancamentos(data);
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      setErro(err?.message || 'Erro ao carregar lançamentos');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    carregar();
+    return () => { cancelado = true; };
     // eslint-disable-next-line
   }, [unidadeIds.join(','), mes, situacao, categoria]);
 
@@ -111,10 +132,17 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
     return arr;
   }, [lancamentos]);
 
+  // Categoria do lançamento -> grupo da matriz. Categoria fora da matriz cai em
+  // SEM_GRUPO (nunca casa com um grupo real).
+  const grupoDaCategoria = useMemo(
+    () => (cat: string) => categoriaToGrupo[normCat(cat)] || SEM_GRUPO,
+    [categoriaToGrupo]
+  );
+
   const filtrados = useMemo(() => {
     let arr = lancamentosOrdenados;
     if (grupo) {
-      arr = arr.filter(l => categoriaToGrupo[normCat(l.categoria)] === grupo);
+      arr = arr.filter(l => grupoDaCategoria(l.categoria) === grupo);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -125,27 +153,51 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
       );
     }
     return arr;
-  }, [lancamentosOrdenados, search, grupo, categoriaToGrupo]);
+  }, [lancamentosOrdenados, search, grupo, grupoDaCategoria]);
 
-  // Opções de situação e categoria — derivadas do universo da empresa (sem filtro de situacao/categoria)
+  // Opções de situação e categoria — derivadas do universo da unidade/mês
+  // (sem filtro de situacao/categoria, para não amputar a própria lista).
   const [opcoes, setOpcoes] = useState<{ situacoes: string[]; categorias: string[] }>({ situacoes: [], categorias: [] });
   useEffect(() => {
-    if (!unidadeIds.length) return;
-    // Busca leve só para popular selects (usa mesmo filtro de mes, sem situacao/categoria)
+    if (!unidadeIds.length) {
+      setOpcoes({ situacoes: [], categorias: [] });
+      return;
+    }
+    let cancelado = false;
     ContasPagarAPI.listarLancamentos({ unidadeIds, mes: mes || null })
       .then(data => {
-        setOpcoes({
-          situacoes:  Array.from(new Set(data.map(d => d.situacaoParcela).filter(Boolean))).sort(),
-          categorias: Array.from(new Set(data.map(d => d.categoria).filter(Boolean))).sort(),
-        });
+        if (cancelado) return;
+        const situacoes  = Array.from(new Set(data.map(d => d.situacaoParcela).filter(Boolean))).sort();
+        const categorias = Array.from(new Set(data.map(d => d.categoria).filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        setOpcoes({ situacoes, categorias });
+        // Mudar de mês/unidade pode extinguir a opção selecionada. Mantê-la
+        // selecionada deixaria o <select> em branco filtrando por um valor
+        // invisível (lista vazia sem explicação) — então limpa.
+        setSituacao(s => (s && !situacoes.includes(s) ? '' : s));
+        setCategoria(c => (c && !categorias.includes(c) ? '' : c));
       })
       .catch(() => {});
+    return () => { cancelado = true; };
   }, [unidadeIds.join(','), mes]);
+
+  // O select de categoria mostra só o que pertence ao grupo escolhido —
+  // antes era possível combinar Grupo=IMPOSTOS com uma categoria de outro
+  // grupo e obter lista vazia sem motivo aparente.
+  const categoriasDisp = useMemo(() => {
+    if (!grupo) return opcoes.categorias;
+    return opcoes.categorias.filter(c => grupoDaCategoria(c) === grupo);
+  }, [opcoes.categorias, grupo, grupoDaCategoria]);
+
+  const handleGrupoChange = (novoGrupo: string) => {
+    setGrupo(novoGrupo);
+    if (categoria && novoGrupo && grupoDaCategoria(categoria) !== novoGrupo) setCategoria('');
+  };
 
   const totalValorPago   = filtrados.reduce((s, l) => s + l.valorPago, 0);
   const totalValorParcela = filtrados.reduce((s, l) => s + l.valorParcela, 0);
 
-  const mesesDisp = getMesesAno();
+  const mesesDisp = getMesesDisponiveis();
 
   return (
     <div className="max-w-[1440px] mx-auto px-10 py-8 animate-fade-in">
@@ -224,11 +276,12 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
           <span className="text-[0.68rem] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Grupo</span>
           <select
             value={grupo}
-            onChange={e => setGrupo(e.target.value)}
+            onChange={e => handleGrupoChange(e.target.value)}
             className="h-8 rounded-lg border border-border bg-white px-2 text-xs font-medium focus:border-primary focus:outline-none min-w-[160px]"
           >
             <option value="">Todos</option>
             {grupos.map(g => <option key={g} value={g}>{g}</option>)}
+            <option value={SEM_GRUPO}>Sem grupo (fora da matriz)</option>
           </select>
 
           <div className="w-px h-5 bg-border/60" />
@@ -240,7 +293,7 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
             className="h-8 rounded-lg border border-border bg-white px-2 text-xs font-medium focus:border-primary focus:outline-none min-w-[180px]"
           >
             <option value="">Todas</option>
-            {opcoes.categorias.map(c => <option key={c} value={c}>{c}</option>)}
+            {categoriasDisp.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
 
           <div className="ml-auto relative">
@@ -291,7 +344,7 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
               {filtrados.map(l => {
                 const u = unidadesMap.get(l.unidadeId);
                 return (
-                  <TableRow key={`${l.contaPagarId}-${l.numeroParcela}-${l.unidadeId}`} className="hover:bg-slate-50/40 transition-colors">
+                  <TableRow key={l.id} className="hover:bg-slate-50/40 transition-colors">
                     <TableCell className="py-2">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: u?.cor || '#cbd5e1' }} />

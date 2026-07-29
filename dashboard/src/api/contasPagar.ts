@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import type { ParcelaPagar } from '../types';
 
 export interface LancamentoCP {
+  id: string;              // PK (uuid) — chave estável para React e dedupe
   contaPagarId: string;
   numeroParcela: string;
   unidadeId: string;
@@ -19,6 +20,23 @@ export interface LancamentoFiltros {
   mes?: string | null;       // formato 'YYYY-MM' filtra por data_pagamento
   situacao?: string | null;
   categoria?: string | null;
+}
+
+// Paginação com .range() só é consistente se a query tiver uma ordenação
+// TOTAL. Com ORDER BY apenas em data_pagamento/vencimento (ou sem ORDER BY),
+// o Postgres pode devolver linhas empatadas em ordem diferente a cada página:
+// a mesma linha aparece em duas páginas (duplicada, inflando somas e gerando
+// keys repetidas no React) enquanto outra some. Todas as queries paginadas
+// abaixo terminam com .order('id') para desempatar, e o resultado ainda passa
+// por este dedupe como rede de segurança.
+function dedupePorId<T extends { id?: unknown }>(rows: T[]): T[] {
+  const vistos = new Set<string>();
+  return rows.filter(r => {
+    const k = String(r.id);
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  });
 }
 
 export const ContasPagarAPI = {
@@ -39,8 +57,9 @@ export const ContasPagarAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_pagar')
-        .select('conta_pagar_id, numero_parcela, sacado, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
+        .select('id, conta_pagar_id, numero_parcela, sacado, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
         .or(windowFilter)
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (Array.isArray(unidadeId)) {
@@ -70,7 +89,7 @@ export const ContasPagarAPI = {
     }
 
     // Mapear de volta para a interface ParcelaPagar que o frontend usa
-    return allData.map(row => ({
+    return dedupePorId(allData).map(row => ({
       ContaPagarID: String(row.conta_pagar_id),
       NumeroParcela: row.numero_parcela,
       Sacado: row.sacado || '',
@@ -102,6 +121,7 @@ export const ContasPagarAPI = {
         .from('etp_contas_pagar')
         .select('categoria')
         .in('unidade_id', unidadeIds)
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (error) throw error;
@@ -127,9 +147,10 @@ export const ContasPagarAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_pagar')
-        .select('conta_pagar_id, numero_parcela, unidade_id, sacado, categoria, vencimento, data_pagamento, valor_parcela, valor_pago, situacao_parcela')
+        .select('id, conta_pagar_id, numero_parcela, unidade_id, sacado, categoria, vencimento, data_pagamento, valor_parcela, valor_pago, situacao_parcela')
         .order('data_pagamento', { ascending: false, nullsFirst: false })
         .order('vencimento', { ascending: false })
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (unidadeIds && unidadeIds.length > 0) query = query.in('unidade_id', unidadeIds);
@@ -151,7 +172,8 @@ export const ContasPagarAPI = {
       page++;
     }
 
-    return allData.map(row => ({
+    return dedupePorId(allData).map(row => ({
+      id:              String(row.id),
       contaPagarId:    String(row.conta_pagar_id),
       numeroParcela:   row.numero_parcela,
       unidadeId:       row.unidade_id,
@@ -175,7 +197,7 @@ export const ContasPagarAPI = {
     const startDate = `${ano}-01-01`;
     const endDate   = `${ano}-12-31`;
 
-    let allData: { unidade_id: string; valor_pago: number; valor_parcela: number; situacao_parcela: string; vencimento: string; data_pagamento: string | null; categoria: string }[] = [];
+    let allData: { id: string; unidade_id: string; valor_pago: number; valor_parcela: number; situacao_parcela: string; vencimento: string; data_pagamento: string | null; categoria: string }[] = [];
     let page = 0;
     const PAGE_SIZE = 1000;
 
@@ -186,9 +208,10 @@ export const ContasPagarAPI = {
     while (true) {
       const { data, error } = await supabase
         .from('etp_contas_pagar')
-        .select('unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
+        .select('id, unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
         .in('unidade_id', unidadeIds)
         .or(windowFilter)
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
@@ -201,7 +224,7 @@ export const ContasPagarAPI = {
     const result: Record<string, Record<string, Record<string, number>>> = {};
     for (const uid of unidadeIds) result[uid] = {};
 
-    for (const row of allData) {
+    for (const row of dedupePorId(allData)) {
       const uid = row.unidade_id;
       // Só considerar itens pagos (com data de pagamento real)
       if (!row.situacao_parcela || row.situacao_parcela === 'Pendente' || !row.data_pagamento) continue;

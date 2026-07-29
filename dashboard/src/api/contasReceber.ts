@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import type { ParcelaReceber } from '../types';
 
 export interface LancamentoCR {
+  id: string;              // PK (uuid) — chave estável para React e dedupe
   contaReceberId: string;
   numeroParcela: string;
   unidadeId: string;
@@ -28,6 +29,19 @@ export interface LancamentoCRFiltros {
   alunoId?: number | null;
 }
 
+// Ver nota em contasPagar.ts: .range() sem ordenação total pode repetir/pular
+// linhas entre páginas. Toda query paginada abaixo desempata por id e o
+// resultado passa por este dedupe.
+function dedupePorId<T extends { id?: unknown }>(rows: T[]): T[] {
+  const vistos = new Set<string>();
+  return rows.filter(r => {
+    const k = String(r.id);
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  });
+}
+
 export const ContasReceberAPI = {
   // Busca contas do banco (Supabase) para consumo do Dashboard.
   // Aceita um id, uma lista de ids (ex.: apenas unidades ativas) ou null (sem filtro).
@@ -46,8 +60,9 @@ export const ContasReceberAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_receber')
-        .select('conta_receber_id, numero_parcela, sacado, aluno_id, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
+        .select('id, conta_receber_id, numero_parcela, sacado, aluno_id, situacao_parcela, vencimento, data_pagamento, valor_parcela, valor_pago, categoria')
         .or(windowFilter)
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (Array.isArray(unidadeId)) {
@@ -73,7 +88,7 @@ export const ContasReceberAPI = {
     // Campos não usados pelos dashboards (forma_cobranca, tipo_recebimento, bolsa,
     // numero_boleto, fatura_id, conta_id, situacao_cnab) ficam como string vazia
     // para preservar o contrato do tipo sem custo de I/O.
-    return allData.map(row => ({
+    return dedupePorId(allData).map(row => ({
       ContaReceberID:  String(row.conta_receber_id),
       NumeroParcela:   row.numero_parcela,
       Sacado:          row.sacado || '',
@@ -108,9 +123,10 @@ export const ContasReceberAPI = {
     while (true) {
       let query = supabase
         .from('etp_contas_receber')
-        .select('conta_receber_id, numero_parcela, unidade_id, sacado, aluno_id, categoria, vencimento, data_pagamento, valor_parcela, valor_pago, situacao_parcela, forma_cobranca, tipo_recebimento, bolsa_associada, numero_boleto, fatura_id')
+        .select('id, conta_receber_id, numero_parcela, unidade_id, sacado, aluno_id, categoria, vencimento, data_pagamento, valor_parcela, valor_pago, situacao_parcela, forma_cobranca, tipo_recebimento, bolsa_associada, numero_boleto, fatura_id')
         .order('data_pagamento', { ascending: false, nullsFirst: false })
         .order('vencimento', { ascending: false })
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       if (unidadeIds && unidadeIds.length > 0) query = query.in('unidade_id', unidadeIds);
@@ -133,7 +149,8 @@ export const ContasReceberAPI = {
       page++;
     }
 
-    return allData.map(row => ({
+    return dedupePorId(allData).map(row => ({
+      id:              String(row.id),
       contaReceberId:  String(row.conta_receber_id),
       numeroParcela:   row.numero_parcela,
       unidadeId:       row.unidade_id,
@@ -163,7 +180,7 @@ export const ContasReceberAPI = {
     const startDate = `${ano}-01-01`;
     const endDate   = `${ano}-12-31`;
 
-    let allData: { unidade_id: string; valor_pago: number; valor_parcela: number; situacao_parcela: string; vencimento: string; data_pagamento: string | null; categoria: string }[] = [];
+    let allData: { id: string; unidade_id: string; valor_pago: number; valor_parcela: number; situacao_parcela: string; vencimento: string; data_pagamento: string | null; categoria: string }[] = [];
     let page = 0;
     const PAGE_SIZE = 1000;
 
@@ -174,9 +191,10 @@ export const ContasReceberAPI = {
     while (true) {
       const { data, error } = await supabase
         .from('etp_contas_receber')
-        .select('unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
+        .select('id, unidade_id, valor_pago, valor_parcela, situacao_parcela, vencimento, data_pagamento, categoria')
         .in('unidade_id', unidadeIds)
         .or(windowFilter)
+        .order('id', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
       if (error) throw error;
       if (!data || data.length === 0) break;
@@ -189,7 +207,7 @@ export const ContasReceberAPI = {
     const result: Record<string, Record<string, Record<string, number>>> = {};
     for (const uid of unidadeIds) result[uid] = {};
 
-    for (const row of allData) {
+    for (const row of dedupePorId(allData)) {
       const uid = row.unidade_id;
       // Só considerar itens efetivamente recebidos (com data de pagamento real)
       if (!row.situacao_parcela || row.situacao_parcela === 'A Receber' || !row.data_pagamento) continue;

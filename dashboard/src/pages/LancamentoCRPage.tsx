@@ -19,12 +19,17 @@ function fmtDateBR(iso: string | null) {
   return `${d}/${m}/${y}`;
 }
 
-function getMesesAno(): { value: string; label: string }[] {
-  const ano = new Date().getFullYear();
-  return Array.from({ length: 12 }, (_, i) => ({
-    value: `${ano}-${String(i + 1).padStart(2, '0')}`,
-    label: `${MESES_PT[i]} ${ano}`,
-  }));
+// Ano corrente + anterior, do mês mais recente para o mais antigo (mesma
+// regra da tela de Lançamento CP).
+function getMesesDisponiveis(): { value: string; label: string }[] {
+  const anoAtual = new Date().getFullYear();
+  const out: { value: string; label: string }[] = [];
+  for (const ano of [anoAtual, anoAtual - 1]) {
+    for (let i = 11; i >= 0; i--) {
+      out.push({ value: `${ano}-${String(i + 1).padStart(2, '0')}`, label: `${MESES_PT[i]} ${ano}` });
+    }
+  }
+  return out;
 }
 
 interface Props {
@@ -55,28 +60,36 @@ export default function LancamentoCRPage({ unidades, activeUnidade, accentColor 
     return m;
   }, [unidades]);
 
-  const carregar = async () => {
-    if (!unidadeIds.length) return;
+  // Descarta respostas obsoletas: sem isso a resposta de um filtro antigo pode
+  // chegar depois da atual e sobrescrever a lista (ver LancamentoCPPage).
+  useEffect(() => {
+    if (!unidadeIds.length) {
+      setLancamentos([]);
+      return;
+    }
+    let cancelado = false;
     setLoading(true);
     setErro('');
-    try {
-      const data = await ContasReceberAPI.listarLancamentos({
-        unidadeIds,
-        mes: mes || null,
-        situacao: situacao || null,
-        categoria: categoria || null,
+    ContasReceberAPI.listarLancamentos({
+      unidadeIds,
+      mes: mes || null,
+      situacao: situacao || null,
+      categoria: categoria || null,
+    })
+      .then(data => {
+        if (cancelado) return;
+        setLancamentos(data);
+      })
+      .catch((e: unknown) => {
+        if (cancelado) return;
+        const err = e as { message?: string };
+        setErro(err?.message || 'Erro ao carregar lançamentos');
+        setLancamentos([]);
+      })
+      .finally(() => {
+        if (!cancelado) setLoading(false);
       });
-      setLancamentos(data);
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      setErro(err?.message || 'Erro ao carregar lançamentos');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    carregar();
+    return () => { cancelado = true; };
     // eslint-disable-next-line
   }, [unidadeIds.join(','), mes, situacao, categoria]);
 
@@ -108,21 +121,31 @@ export default function LancamentoCRPage({ unidades, activeUnidade, accentColor 
   // Opções de situação e categoria derivadas do universo da empresa
   const [opcoes, setOpcoes] = useState<{ situacoes: string[]; categorias: string[] }>({ situacoes: [], categorias: [] });
   useEffect(() => {
-    if (!unidadeIds.length) return;
+    if (!unidadeIds.length) {
+      setOpcoes({ situacoes: [], categorias: [] });
+      return;
+    }
+    let cancelado = false;
     ContasReceberAPI.listarLancamentos({ unidadeIds, mes: mes || null })
       .then(data => {
-        setOpcoes({
-          situacoes:  Array.from(new Set(data.map(d => d.situacaoParcela).filter(Boolean))).sort(),
-          categorias: Array.from(new Set(data.map(d => d.categoria).filter(Boolean))).sort(),
-        });
+        if (cancelado) return;
+        const situacoes  = Array.from(new Set(data.map(d => d.situacaoParcela).filter(Boolean))).sort();
+        const categorias = Array.from(new Set(data.map(d => d.categoria).filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        setOpcoes({ situacoes, categorias });
+        // Opção selecionada que sumiu com a troca de mês/unidade seria um
+        // filtro invisível — limpa.
+        setSituacao(s => (s && !situacoes.includes(s) ? '' : s));
+        setCategoria(c => (c && !categorias.includes(c) ? '' : c));
       })
       .catch(() => {});
+    return () => { cancelado = true; };
   }, [unidadeIds.join(','), mes]);
 
   const totalValorPago   = filtrados.reduce((s, l) => s + l.valorPago, 0);
   const totalValorParcela = filtrados.reduce((s, l) => s + l.valorParcela, 0);
 
-  const mesesDisp = getMesesAno();
+  const mesesDisp = getMesesDisponiveis();
 
   return (
     <div className="max-w-[1440px] mx-auto px-10 py-8 animate-fade-in">
@@ -258,7 +281,7 @@ export default function LancamentoCRPage({ unidades, activeUnidade, accentColor 
               {filtrados.map(l => {
                 const u = unidadesMap.get(l.unidadeId);
                 return (
-                  <TableRow key={`${l.contaReceberId}-${l.numeroParcela}-${l.unidadeId}`} className="hover:bg-slate-50/40 transition-colors">
+                  <TableRow key={l.id} className="hover:bg-slate-50/40 transition-colors">
                     <TableCell className="py-2">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: u?.cor || '#cbd5e1' }} />
