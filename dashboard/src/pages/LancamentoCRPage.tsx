@@ -156,7 +156,7 @@ export default function LancamentoCRPage({ unidades, activeUnidade, accentColor 
           <h1 className="text-[1.75rem] font-extrabold tracking-tight flex items-center gap-3" style={{ color: accentColor }}>
             <DollarSign size={26} /> Lançamento CR
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Mensalidades e demais contas a receber — filtre por unidade, mês, situação e categoria.</p>
+          <p className="text-muted-foreground text-sm mt-1">Mensalidades e demais contas a receber — filtre por unidade, mês, situação e categoria. O mês considera o <strong>vencimento</strong> (competência).</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && (

@@ -499,14 +499,19 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
 
   const filteredData = useMemo(() => {
     const mesesSet = new Set(mesesSelecionados);
+    // Regime de COMPETENCIA: a parcela pertence ao mes do VENCIMENTO, tenha
+    // sido paga quando for. Antes a parcela ja quitada era atribuida ao mes do
+    // PAGAMENTO, entao uma despesa vencendo em agosto e paga em julho sumia da
+    // visao de agosto — nao entrava em realizado nem em pendente.
     const getItemMes = (item: ParcelaPagar): string | null => {
-      if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
-        const d = parseDatePtBR(item.DataPagamento);
-        if (d) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      }
       if (item.Vencimento) {
         const d = new Date(item.Vencimento);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+      // Sem vencimento (ex.: saida avulsa de caixa) cai no mes do pagamento.
+      if (item.SituacaoParcela && item.SituacaoParcela !== 'Pendente' && item.DataPagamento) {
+        const d = parseDatePtBR(item.DataPagamento);
+        if (d) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       }
       return null;
     };
@@ -589,7 +594,9 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
       if (selectedSituations.length > 0 && !selectedSituations.includes(item.SituacaoParcela || 'Sem Status')) continue;
       // Só considerar itens pagos (com data de pagamento real)
       if (!item.SituacaoParcela || item.SituacaoParcela === 'Pendente' || !item.DataPagamento) continue;
-      const refDate = parseDatePtBR(item.DataPagamento);
+      // Competencia: o realizado do mes e o que VENCE no mes e ja foi pago —
+      // mesmo criterio do planejamento com que este grafico e comparado.
+      const refDate = item.Vencimento ? new Date(item.Vencimento) : parseDatePtBR(item.DataPagamento);
       if (!refDate || refDate.getFullYear() !== ano) continue;
       const mesKey = `${ano}-${String(refDate.getMonth() + 1).padStart(2, '0')}`;
       const val = item.ValorPago > 0 ? item.ValorPago : item.ValorParcela;
@@ -895,7 +902,7 @@ export default function DashboardPage({ activeUnidade, unidades, accentColor }: 
               <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
                 Evolução Mensal · {new Date().getFullYear()}
                 {selectedCategory !== 'Todas' && <Badge variant="secondary" className="text-primary bg-primary/12 border-primary/20 text-xs">{selectedCategory}</Badge>}
-                <HelpHint text="Evolução mês a mês do realizado (barras) e do planejado (linha) no ano corrente. Quando nenhuma unidade específica está ativa, as barras ficam empilhadas por unidade. O realizado soma ValorPago (ou ValorParcela quando não houver pagamento) pela data de pagamento. O planejado vem da tabela de planejamento anual." />
+                <HelpHint text="Evolução mês a mês do realizado (barras) e do planejado (linha) no ano corrente. Quando nenhuma unidade específica está ativa, as barras ficam empilhadas por unidade. O realizado soma ValorPago (ou ValorParcela quando não houver pagamento) das parcelas já quitadas, lançadas no mês de VENCIMENTO (competência) — mesmo critério do planejamento com que são comparadas. O planejado vem da tabela de planejamento anual." />
               </h2>
               {(() => {
                   const isStacked = !activeUnidade && !!monthlyDataArrayStacked;

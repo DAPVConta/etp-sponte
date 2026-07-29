@@ -133,12 +133,14 @@ export const ContasReceberAPI = {
       if (situacao)                              query = query.eq('situacao_parcela', situacao);
       if (categoria)                             query = query.eq('categoria', categoria);
       if (alunoId)                               query = query.eq('aluno_id', alunoId);
+      // Regime de COMPETENCIA: o mes filtra por VENCIMENTO (ver nota em
+      // contasPagar.ts).
       if (mes) {
         const start = `${mes}-01`;
         const [ano, m] = mes.split('-').map(Number);
         const nextMonth = new Date(ano, m, 1);
         const end = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
-        query = query.gte('data_pagamento', start).lt('data_pagamento', end);
+        query = query.gte('vencimento', start).lt('vencimento', end);
       }
 
       const { data, error } = await query;
@@ -211,7 +213,8 @@ export const ContasReceberAPI = {
       const uid = row.unidade_id;
       // Só considerar itens efetivamente recebidos (com data de pagamento real)
       if (!row.situacao_parcela || row.situacao_parcela === 'A Receber' || !row.data_pagamento) continue;
-      const mes = row.data_pagamento.substring(0, 7);
+      // Competencia: o realizado entra no mes do VENCIMENTO (ver contasPagar.ts).
+      const mes = (row.vencimento || row.data_pagamento).substring(0, 7);
       if (!mes.startsWith(String(ano))) continue;
       const valor = Number(row.valor_pago) > 0 ? Number(row.valor_pago) : Number(row.valor_parcela);
       const cat = row.categoria || '';

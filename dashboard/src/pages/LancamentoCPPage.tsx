@@ -208,7 +208,7 @@ export default function LancamentoCPPage({ unidades, activeUnidade, accentColor 
           <h1 className="text-[1.75rem] font-extrabold tracking-tight flex items-center gap-3" style={{ color: accentColor }}>
             <Receipt size={26} /> Lançamento CP
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Contas a pagar lançadas — filtre por unidade, mês, situação, grupo e categoria.</p>
+          <p className="text-muted-foreground text-sm mt-1">Contas a pagar — filtre por unidade, mês, situação, grupo e categoria. O mês considera o <strong>vencimento</strong> (competência).</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && (

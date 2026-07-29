@@ -156,12 +156,16 @@ export const ContasPagarAPI = {
       if (unidadeIds && unidadeIds.length > 0) query = query.in('unidade_id', unidadeIds);
       if (situacao)                              query = query.eq('situacao_parcela', situacao);
       if (categoria)                             query = query.eq('categoria', categoria);
+      // Regime de COMPETENCIA: o mes filtra por VENCIMENTO, nao por
+      // data_pagamento. Filtrar por pagamento escondia dois grupos: a parcela
+      // paga em outro mes (sumia do mes a que pertence) e a parcela ainda em
+      // aberto (data_pagamento nulo nunca casa com gte/lt).
       if (mes) {
         const start = `${mes}-01`;
         const [ano, m] = mes.split('-').map(Number);
         const nextMonth = new Date(ano, m, 1);
         const end = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
-        query = query.gte('data_pagamento', start).lt('data_pagamento', end);
+        query = query.gte('vencimento', start).lt('vencimento', end);
       }
 
       const { data, error } = await query;
@@ -228,7 +232,9 @@ export const ContasPagarAPI = {
       const uid = row.unidade_id;
       // Só considerar itens pagos (com data de pagamento real)
       if (!row.situacao_parcela || row.situacao_parcela === 'Pendente' || !row.data_pagamento) continue;
-      const mes = row.data_pagamento.substring(0, 7);
+      // Competencia: o realizado entra no mes do VENCIMENTO. Sem vencimento
+      // (lancamento avulso de caixa), cai no mes do pagamento.
+      const mes = (row.vencimento || row.data_pagamento).substring(0, 7);
       if (!mes.startsWith(String(ano))) continue;
       const valor = Number(row.valor_pago) > 0 ? Number(row.valor_pago) : Number(row.valor_parcela);
       const cat = row.categoria || '';
