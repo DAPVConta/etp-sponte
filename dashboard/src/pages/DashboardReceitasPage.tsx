@@ -239,14 +239,26 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
   // ── Filtragem por período/categoria/situação ─────────────────────────────
   const filteredData = useMemo(() => {
     const mesesSet = new Set(mesesSelecionados);
+    // Regime de COMPETENCIA: a parcela pertence ao mes do VENCIMENTO, tenha
+    // sido paga quando for.
+    //
+    // Antes a parcela ja recebida era atribuida ao mes do PAGAMENTO (regime de
+    // caixa). Com isso, uma parcela com vencimento em agosto paga adiantada em
+    // julho sumia da visao de agosto — nao entrava em "Recebido" nem em
+    // "A Receber" — e o KPI Recebido do mes zerava. Ex.: Jaboatao 08/2026 tem
+    // 419 parcelas vencendo no mes, 16 delas ja quitadas (R$ 7.639,08), todas
+    // pagas entre 12/2025 e 07/2026; o dashboard mostrava R$ 0,00 recebido.
+    // O relatorio "Contas a Receber" do Sponte e emitido por faixa de
+    // vencimento, entao competencia e o criterio que concilia com ele.
     const getMes = (p: ParcelaReceber): string | null => {
-      if (isRecebida(p) && p.DataPagamento) {
-        const d = parseDatePtBR(p.DataPagamento);
-        if (d) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      }
       if (p.Vencimento) {
         const d = new Date(p.Vencimento);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+      // Sem vencimento (ex.: entrada avulsa de caixa) cai no mes do pagamento.
+      if (isRecebida(p) && p.DataPagamento) {
+        const d = parseDatePtBR(p.DataPagamento);
+        if (d) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       }
       return null;
     };
@@ -289,18 +301,17 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
     for (const p of data) {
       if (selectedCategory !== 'Todas' && p.Categoria !== selectedCategory) continue;
       if (isCancelada(p)) continue;
-      // Recebidas → usa DataPagamento
-      if (isRecebida(p) && p.DataPagamento) {
-        const d = parseDatePtBR(p.DataPagamento);
-        if (!d || d.getFullYear() !== ano) continue;
-        const k = `${ano}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const v = p.ValorPago > 0 ? p.ValorPago : p.ValorParcela;
-        aggRec[k] = (aggRec[k] || 0) + v;
-      } else if (p.Vencimento) {
-        // A receber / vencidas → usa Vencimento
-        const d = new Date(p.Vencimento);
-        if (d.getFullYear() !== ano) continue;
-        const k = `${ano}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      // Competencia: recebidas e a receber usam o mesmo eixo (Vencimento), para
+      // o grafico bater com os KPIs acima. Parcela sem vencimento cai no mes do
+      // pagamento.
+      let d: Date | null = null;
+      if (p.Vencimento) d = new Date(p.Vencimento);
+      else if (isRecebida(p) && p.DataPagamento) d = parseDatePtBR(p.DataPagamento);
+      if (!d || d.getFullYear() !== ano) continue;
+      const k = `${ano}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (isRecebida(p)) {
+        aggRec[k] = (aggRec[k] || 0) + (p.ValorPago > 0 ? p.ValorPago : p.ValorParcela);
+      } else {
         aggAR[k] = (aggAR[k] || 0) + p.ValorParcela;
       }
     }
@@ -592,10 +603,10 @@ export default function DashboardReceitasPage({ activeUnidade, unidades, accentC
           <div>
             <h2 className="text-sm font-bold flex items-center gap-1.5">
               <TrendingUp size={14} style={{ color: accentColor }} /> Evolução mensal — {new Date().getFullYear()}
-              <HelpHint text="Comparativo mês a mês do ano corrente. Barras verdes (Recebido) somam parcelas efetivamente pagas no mês — usa DataPagamento e ValorPago (ou ValorParcela se não houver). Barras âmbar (A Receber) somam parcelas em aberto pelo mês de vencimento. Respeita os filtros de situação, categoria e unidade aplicados acima." />
+              <HelpHint text="Comparativo mês a mês do ano corrente, por competência: cada parcela entra no mês do seu VENCIMENTO. Barras verdes (Recebido) somam as parcelas daquele vencimento já quitadas, usando ValorPago (ou ValorParcela se não houver), mesmo que o pagamento tenha ocorrido em outro mês. Barras âmbar (A Receber) somam as parcelas do mês ainda em aberto. Respeita os filtros de situação, categoria e unidade aplicados acima." />
             </h2>
             <p className="text-[0.7rem] text-muted-foreground mt-0.5">
-              <span className="text-emerald-600 font-medium">Recebido</span> usa DataPagamento · <span className="text-amber-600 font-medium">A receber</span> usa Vencimento
+              <span className="text-emerald-600 font-medium">Recebido</span> e <span className="text-amber-600 font-medium">A receber</span> por competência (mês do vencimento)
             </p>
           </div>
         </div>
