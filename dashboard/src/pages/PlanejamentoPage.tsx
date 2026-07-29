@@ -72,7 +72,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
   const [favoritos, setFavoritos]         = useState<Set<string>>(new Set());
   const [apenasF, setApenasF]             = useState(false);
   const [searchCat, setSearchCat]         = useState('');
-  const [refMode, setRefMode]             = useState<'media6' | 'ultimomes'>('media6');
+  const [refMode, setRefMode]             = useState<'media6' | 'ultimomes'>('ultimomes');
 
   const [treeData, setTreeData]               = useState<RowGrupo[]>([]);
   const [valores, setValores]                 = useState<Map<string, ValorEntry>>(new Map());
@@ -672,13 +672,13 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
           {/* Summary cards */}
           <div className="grid grid-cols-4 gap-4 mb-5 max-[1100px]:grid-cols-2 max-[600px]:grid-cols-1">
             {[
-              { icon: <TrendingUp size={19} />, color: `${accentColor}22`, textColor: accentColor,      label: 'Média 6 Meses',   value: fmt(totalMedia) },
+              { icon: <TrendingUp size={19} />, color: `${accentColor}22`, textColor: accentColor,      label: refMode === 'media6' ? 'Média 6 Meses' : 'Último Mês', value: fmt(totalMedia) },
               { icon: <Target size={19} />,     color: 'rgba(16,185,129,0.15)', textColor: '#059669',   label: 'Total Planejado', value: fmt(totalPlanejado) },
               {
                 icon: variacaoTotal >= 0 ? <Plus size={19} /> : <Minus size={19} />,
                 color: variacaoTotal >= 0 ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)',
                 textColor: variacaoTotal >= 0 ? '#dc2626' : '#059669',
-                label: 'Variação vs Média',
+                label: refMode === 'media6' ? 'Variação vs Média' : 'Variação vs Último Mês',
                 value: `${variacaoTotal >= 0 ? '+' : ''}${fmt(variacaoTotal)}`,
               },
               { icon: <CalendarDays size={19} />, color: 'rgba(245,158,11,0.15)', textColor: '#d97706', label: 'Mês · Unidade', value: `${mesesSelecionados.length} · ${activeUnidade ? activeUnidade.nome : 'Todas'}` },
@@ -721,7 +721,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
                 <div className="flex items-start gap-2.5 px-6 py-3 bg-amber-50 border-b border-amber-200">
                   <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
                   <div className="text-xs text-amber-800">
-                    <strong>{naoSalvosCount} grupo{naoSalvosCount !== 1 ? 's' : ''}</strong> {naoSalvosCount !== 1 ? 'estão' : 'está'} exibindo o valor padrão (média 6 meses) e ainda não {naoSalvosCount !== 1 ? 'foram persistidos' : 'foi persistido'} no banco para esta unidade/mês. Os dashboards mostrarão R$0 como planejado até que você clique em <strong>Salvar</strong>.
+                    <strong>{naoSalvosCount} grupo{naoSalvosCount !== 1 ? 's' : ''}</strong> {naoSalvosCount !== 1 ? 'estão' : 'está'} exibindo o valor padrão ({refMode === 'media6' ? 'média 6 meses' : 'último mês'}) e ainda não {naoSalvosCount !== 1 ? 'foram persistidos' : 'foi persistido'} no banco para esta unidade/mês. Os dashboards mostrarão R$0 como planejado até que você clique em <strong>Salvar</strong>.
                   </div>
                 </div>
               );
@@ -800,7 +800,7 @@ export default function PlanejamentoPage({ unidades, activeUnidade, accentColor 
                             {grupoNaoSalvo && (
                               <span
                                 className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.62rem] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-300 flex-shrink-0"
-                                title="Este grupo ainda não foi salvo no banco para esta unidade/mês. O valor exibido é o padrão (média 6 meses). Clique em Salvar para persistir."
+                                title={`Este grupo ainda não foi salvo no banco para esta unidade/mês. O valor exibido é o padrão (${refMode === 'media6' ? 'média 6 meses' : 'último mês'}). Clique em Salvar para persistir.`}
                                 onClick={e => e.stopPropagation()}
                               >
                                 <AlertCircle size={9} />
