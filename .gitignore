@@ -14,6 +14,9 @@ node_modules/
 dist/
 dist-ssr/
 
+# Vercel CLI link (local only)
+.vercel
+
 # Logs
 *.log
 logs/
