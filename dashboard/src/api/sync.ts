@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase';
 import type { CategoriaDespesa, CategoriaReceita, ParcelaPagar, ParcelaReceber } from '../types';
 
 // Converte formatações pt-BR como "DD/MM/YYYY hh:mm:ss" ou "DD/MM/YYYY" para ISO YYYY-MM-DD
-const parseDateForDB = (s: string): string | null => {
+export const parseDateForDB = (s: string): string | null => {
   if (!s) return null;
   if (s.includes('T')) return new Date(s).toISOString().split('T')[0]; // Já é ISO?
 
@@ -14,7 +14,7 @@ const parseDateForDB = (s: string): string | null => {
 };
 
 // Converte string numérica (potencialmente vazia) para number | null
-const toIntOrNull = (s: string | number | null | undefined): number | null => {
+export const toIntOrNull = (s: string | number | null | undefined): number | null => {
   if (s === null || s === undefined || s === '') return null;
   const n = typeof s === 'number' ? s : parseInt(String(s), 10);
   return Number.isFinite(n) ? n : null;
@@ -23,7 +23,7 @@ const toIntOrNull = (s: string | number | null | undefined): number | null => {
 // Normaliza nome de categoria vindo da API Sponte. Alguns cadastros tem
 // pontos finais redundantes (ex.: "Rescisao Contratual..") por digitacao errada
 // no Sponte; aqui limpamos antes de persistir para nao poluir agrupamentos.
-const normalizeCategoria = (s: string | null | undefined): string => {
+export const normalizeCategoria = (s: string | null | undefined): string => {
   if (!s) return '';
   return s.replace(/[.\s]+$/, '').trim();
 };
