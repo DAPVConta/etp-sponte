@@ -1,0 +1,7 @@
+# Supabase project config
+# A funcao invite-user faz validacao manual do JWT dentro do proprio handler
+# (usa authHeader e supabaseCaller.auth.getUser()), entao desabilitamos a
+# verificacao automatica do gateway. Isso tambem evita que preflight OPTIONS
+# (sem Authorization) sejam bloqueados antes de chegar ao handler CORS.
+[functions.invite-user]
+verify_jwt = false
